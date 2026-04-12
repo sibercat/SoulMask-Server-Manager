@@ -1,5 +1,5 @@
 # SoulMask Server Manager
-
+![Dashboard](https://raw.githubusercontent.com/sibercat/SoulMask-Server-Manager/refs/heads/main/preview.webp)
 A Windows GUI application for installing, managing, and monitoring SoulMask dedicated servers — including full cluster support, mod management, gameplay settings, automated backups, and Discord webhooks.
 
 Built with .NET 10 WinForms by **sibercat**.
