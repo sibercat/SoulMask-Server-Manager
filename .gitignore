@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.lscache
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Runtime data — never commit server files or player data
+SoulMaskServer/
+startup_crash.log
+logs/
