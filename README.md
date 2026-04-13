@@ -68,8 +68,4 @@ No installation needed — just extract and run `SoulMaskServerManager.exe`.
 
 For cluster setup, see the **Cluster Guide** tab inside the app or watch the [video tutorial](https://youtu.be/UgVNxni_STM).
 
----
-
-## License
-
 MIT
