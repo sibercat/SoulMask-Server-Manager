@@ -194,13 +194,20 @@ public class SteamCmdService
                 continue;
             }
 
-            // Read ModeInfo.json to get the PluginName (folder name the server expects)
-            string modeInfoPath = Path.Combine(downloadedPath, "ModeInfo.json");
-            if (!File.Exists(modeInfoPath))
+            // ModeInfo.json may be at the root or nested in a subdirectory of the download
+            string? modeInfoPath = Directory.GetFiles(downloadedPath, "ModeInfo.json", SearchOption.AllDirectories)
+                                             .FirstOrDefault()
+                                ?? Directory.GetFiles(downloadedPath, "ModInfo.json", SearchOption.AllDirectories)
+                                             .FirstOrDefault();
+
+            if (modeInfoPath == null)
             {
                 Emit($"  Warning: ModeInfo.json not found for mod {id}, skipping copy.");
                 continue;
             }
+
+            // The folder containing ModeInfo.json is the mod root to copy
+            string modRoot = Path.GetDirectoryName(modeInfoPath)!;
 
             string pluginName;
             try
@@ -218,13 +225,20 @@ public class SteamCmdService
             string destDir = Path.Combine(ModsDir, pluginName);
             Directory.CreateDirectory(destDir);
 
-            foreach (var file in Directory.GetFiles(downloadedPath, "*", SearchOption.AllDirectories))
+            foreach (var file in Directory.GetFiles(modRoot, "*", SearchOption.AllDirectories))
             {
-                string rel  = Path.GetRelativePath(downloadedPath, file);
+                string rel  = Path.GetRelativePath(modRoot, file);
                 string dest = Path.Combine(destDir, rel);
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 File.Copy(file, dest, overwrite: true);
             }
+
+            // Stamp ModeInfo.json with the current time so Check for Updates
+            // correctly shows "Up to date" after this install (File.Copy preserves
+            // the depot's original timestamp, which predates any page-only edits).
+            string stampPath = Path.Combine(destDir, "ModeInfo.json");
+            if (File.Exists(stampPath))
+                File.SetLastWriteTimeUtc(stampPath, DateTime.UtcNow);
 
             Emit($"  Mod {id} ({pluginName}) installed.");
         }

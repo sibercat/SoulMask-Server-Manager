@@ -226,10 +226,8 @@ partial class MainForm
 
         var ids = lvMods.Items.Cast<ListViewItem>().Select(i => i.SubItems[1].Text).ToList();
 
-        // Fetch latest Steam timestamps for any we don't have yet
-        var missing = ids.Where(id => !_modSteamTimestamp.ContainsKey(id)).ToList();
-        if (missing.Count > 0)
-            await FetchModNamesAsync(missing);
+        // Always re-fetch Steam timestamps so we catch updates approved since the app opened
+        await FetchModNamesAsync(ids);
 
         // Scan ServerFiles\WS\Mods\ for installed mods by reading ModeInfo.json
         var installed = ScanInstalledMods(_steamCmd.ModsDir);

@@ -15,6 +15,7 @@
     <Copyright>Copyright © 2026</Copyright>
     <Optimize>true</Optimize>
     <Deterministic>true</Deterministic>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <!-- CS8618: WinForms Designer fields are set by InitializeComponent() — safe to suppress -->
     <NoWarn>$(NoWarn);CS8618</NoWarn>
 

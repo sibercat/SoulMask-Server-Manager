@@ -871,18 +871,18 @@ partial class MainForm
         };
         lvMods.Columns.Add("Order",  56);
         lvMods.Columns.Add("Mod ID", 130);
-        lvMods.Columns.Add("Name",   300);
-        lvMods.Columns.Add("Status", 140);
+        lvMods.Columns.Add("Name",   220);
+        lvMods.Columns.Add("Status", 200);
 
-        // Keep Name column filling available width
+        // Keep Status column filling available width so text never clips
         lvMods.Resize += (_, _) =>
         {
             if (lvMods.Columns.Count >= 4)
-                lvMods.Columns[2].Width = Math.Max(100,
+                lvMods.Columns[3].Width = Math.Max(160,
                     lvMods.ClientSize.Width
                     - lvMods.Columns[0].Width
                     - lvMods.Columns[1].Width
-                    - lvMods.Columns[3].Width - 4);
+                    - lvMods.Columns[2].Width - 4);
         };
 
         // ── Bottom: actions (two rows) ────────────────────────────────
