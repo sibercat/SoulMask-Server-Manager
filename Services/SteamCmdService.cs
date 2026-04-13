@@ -310,14 +310,40 @@ public class SteamCmdService
 
         using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) { Emit(e.Data); ParseProgress(e.Data); } };
-        proc.ErrorDataReceived  += (_, e) => { if (e.Data != null) Emit(e.Data); };
+        // Track last output time so we can emit a heartbeat during SteamCMD's silent self-update phase
+        long lastOutputTick = Environment.TickCount64;
+
+        proc.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            lastOutputTick = Environment.TickCount64;
+            Emit(e.Data);
+            ParseProgress(e.Data);
+            if (e.Data.Contains("type 'quit' to exit"))
+                Emit("SteamCMD is self-updating — this can take 1-2 minutes, please wait...");
+        };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) { lastOutputTick = Environment.TickCount64; Emit(e.Data); } };
 
         proc.Start();
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
 
+        // Heartbeat: if SteamCMD goes silent for >30s, reassure the user it's still running
+        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _ = Task.Run(async () =>
+        {
+            while (!heartbeatCts.Token.IsCancellationRequested)
+            {
+                await Task.Delay(30_000, heartbeatCts.Token).ContinueWith(_ => { });
+                if (heartbeatCts.Token.IsCancellationRequested) break;
+                long silentMs = Environment.TickCount64 - lastOutputTick;
+                if (silentMs >= 28_000 && !proc.HasExited)
+                    Emit($"  ... still working ({silentMs / 1000}s since last output) ...");
+            }
+        }, heartbeatCts.Token);
+
         await proc.WaitForExitAsync(ct);
+        heartbeatCts.Cancel();
         return proc.ExitCode;
     }
 
