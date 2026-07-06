@@ -7,10 +7,11 @@ partial class ClusterManagerForm
     private System.ComponentModel.IContainer? components = null;
 
     protected MenuStrip menuStrip;
-    protected ToolStripMenuItem menuFile, menuHelp, menuHelpAbout;
+    protected ToolStripMenuItem menuFile, menuHelp, menuHelpAbout, menuCheckUpdates;
     protected ToolStripMenuItem menuAddInstance, menuRenameInstance, menuRemoveInstance, menuExit;
     protected DarkTabControl tcInstances;
     protected StatusStrip statusStrip;
+    protected ToolStripStatusLabel lblUpdate;
 
     protected override void Dispose(bool disposing)
     {
@@ -49,8 +50,9 @@ partial class ClusterManagerForm
             menuExit
         ]);
 
-        menuHelpAbout = new ToolStripMenuItem("About");
-        menuHelp.DropDownItems.Add(menuHelpAbout);
+        menuCheckUpdates = new ToolStripMenuItem("Check for Updates…");
+        menuHelpAbout    = new ToolStripMenuItem("About");
+        menuHelp.DropDownItems.AddRange([menuCheckUpdates, new ToolStripSeparator(), menuHelpAbout]);
 
         menuStrip.Items.AddRange([menuFile, menuHelp]);
 
@@ -65,6 +67,19 @@ partial class ClusterManagerForm
 
         // ── Status strip — shows all instances at a glance ───────────
         statusStrip = new StatusStrip { SizingGrip = false };
+
+        // Update notice — right-aligned so instance labels (re)added on the
+        // left by SyncStatusStripOrder never displace it
+        lblUpdate = new ToolStripStatusLabel
+        {
+            Alignment       = ToolStripItemAlignment.Right,
+            Visible         = false,
+            IsLink          = true,
+            LinkColor       = Color.FromArgb(255, 152, 0),
+            ActiveLinkColor = Color.FromArgb(255, 193, 7),
+            ToolTipText     = "Click to open the GitHub releases page"
+        };
+        statusStrip.Items.Add(lblUpdate);
 
         Controls.Add(tcInstances);
         Controls.Add(statusStrip);

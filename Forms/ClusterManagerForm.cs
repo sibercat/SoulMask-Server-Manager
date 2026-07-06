@@ -47,7 +47,76 @@ public partial class ClusterManagerForm : Form
 
         // Re-apply after Shown so Windows doesn't override our theming
         this.Shown += (_, _) => ThemeManager.ReapplyConsoleThemeOverrides(this);
+
+        // Silent update check once the window is up
+        this.Shown += (_, _) => _ = CheckForUpdateAsync(manual: false);
     }
+
+    // ── GitHub update check ───────────────────────────────────────────
+
+    private const string ReleasesPageUrl = "https://github.com/sibercat/SoulMask-Server-Manager/releases";
+    private const string LatestReleaseApi = "https://api.github.com/repos/sibercat/SoulMask-Server-Manager/releases/latest";
+    private static readonly HttpClient _http = new();
+
+    private async Task CheckForUpdateAsync(bool manual)
+    {
+        try
+        {
+            // GitHub API rejects requests without a User-Agent
+            if (_http.DefaultRequestHeaders.UserAgent.Count == 0)
+                _http.DefaultRequestHeaders.UserAgent.TryParseAdd("SoulMaskServerManager-UpdateCheck/1.0");
+
+            string json = await _http.GetStringAsync(LatestReleaseApi);
+
+            // Only tag_name is needed — a regex avoids pulling in full JSON parsing
+            var match = System.Text.RegularExpressions.Regex.Match(json, @"""tag_name""\s*:\s*""([^""]+)""");
+            string tag = match.Success ? match.Groups[1].Value.TrimStart('v', 'V') : "";
+            if (!Version.TryParse(tag, out var latest))
+            {
+                if (manual)
+                    MessageBox.Show("Could not read the latest version from GitHub.",
+                        "Update Check", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var current = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            if (current == null) return;
+
+            if (latest <= current)
+            {
+                if (manual)
+                    MessageBox.Show($"You are running the latest version (v{current.ToString(3)}).",
+                        "Up to Date", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            lblUpdate.Text    = $"⬆  Update available: v{latest}";
+            lblUpdate.Visible = true;
+
+            if (manual && MessageBox.Show(
+                    $"Version v{latest} is available (you have v{current.ToString(3)}).\n\nOpen the releases page?",
+                    "Update Available", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                OpenReleasesPage();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // Repo has no published releases yet
+            if (manual)
+                MessageBox.Show("No releases have been published on GitHub yet.",
+                    "Update Check", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            // Silent on startup — no internet or API rate limit shouldn't nag
+            if (manual)
+                MessageBox.Show($"Update check failed:\n{ex.Message}",
+                    "Update Check", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private static void OpenReleasesPage() =>
+        System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo(ReleasesPageUrl) { UseShellExecute = true });
 
     // ── Instance loading ──────────────────────────────────────────────
 
@@ -166,6 +235,8 @@ public partial class ClusterManagerForm : Form
         menuRemoveInstance.Click += (_, _) => OnRemoveInstance();
         menuExit.Click           += (_, _) => Close();
         menuHelpAbout.Click      += (_, _) => ShowAbout();
+        menuCheckUpdates.Click   += async (_, _) => await CheckForUpdateAsync(manual: true);
+        lblUpdate.Click          += (_, _) => OpenReleasesPage();
 
         tcInstances.MouseDoubleClick += (_, e) =>
         {
