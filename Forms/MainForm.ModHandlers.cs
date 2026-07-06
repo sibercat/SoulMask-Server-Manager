@@ -318,9 +318,9 @@ partial class MainForm
 
         var cts = new CancellationTokenSource();
 
-        _steamCmd.OutputReceived      += OnSteamOutput;
-        _steamCmd.DownloadProgressChanged += OnSteamProgress;
-
+        // SteamCMD output already reaches the console via the OutputReceived
+        // handler wired in the constructor — no extra subscription here, or
+        // every line would print twice.
         try
         {
             await _steamCmd.UpdateModsAsync(ids, cts.Token);
@@ -334,8 +334,6 @@ partial class MainForm
         }
         finally
         {
-            _steamCmd.OutputReceived      -= OnSteamOutput;
-            _steamCmd.DownloadProgressChanged -= OnSteamProgress;
             this.InvokeIfRequired(() =>
             {
                 btnUpdateMods.Enabled      = true;
@@ -343,12 +341,6 @@ partial class MainForm
             });
         }
     }
-
-    private void OnSteamOutput(object? sender, string line) =>
-        this.InvokeIfRequired(() => AppendConsole($"[SteamCMD] {line}", Color.FromArgb(180, 180, 180)));
-
-    private void OnSteamProgress(object? sender, int pct) =>
-        this.InvokeIfRequired(() => { /* progress bar already handled by server install path */ });
 
     // ── Helpers ───────────────────────────────────────────────────────
 

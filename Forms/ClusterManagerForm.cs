@@ -314,7 +314,7 @@ public partial class ClusterManagerForm : Form
                 };
 
                 // Save pre-configured settings into the new instance folder
-                var cm = new Services.ConfigurationManager(dir, null!);
+                var cm = new Services.ConfigurationManager(dir, null);
                 cm.SaveSettings(client);
             }
         }
@@ -359,13 +359,33 @@ public partial class ClusterManagerForm : Form
         try
         {
             Directory.Move(current.RootDir, newDir);
-            current.Tab.Text = $"  {newName}  ";
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Rename failed: {ex.Message}", "Error",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
         }
+
+        // The embedded MainForm's services (logger, config, backups, SteamCMD)
+        // were all constructed with the old folder path — just updating the tab
+        // text would leave them writing to (and recreating) the old folder.
+        // Rebuild the instance against the new path instead.
+        int tabIndex = tcInstances.TabPages.IndexOf(current.Tab);
+        statusStrip.Items.Remove(current.StatusLabel);
+        tcInstances.TabPages.Remove(current.Tab);
+        current.Form.Dispose();
+        _instances.Remove(current);
+
+        AddInstance(newName, newDir);   // appends at the end — move it back into place
+        var entry = _instances[^1];
+        _instances.RemoveAt(_instances.Count - 1);
+        _instances.Insert(tabIndex, entry);
+        tcInstances.TabPages.Remove(entry.Tab);
+        tcInstances.TabPages.Insert(tabIndex, entry.Tab);
+        SyncStatusStripOrder();
+        tcInstances.SelectedTab = entry.Tab;
+        SaveInstanceOrder();
     }
 
     private async void OnRemoveInstance()
@@ -397,8 +417,13 @@ public partial class ClusterManagerForm : Form
 
     // ── Shutdown ──────────────────────────────────────────────────────
 
+    private bool _closeHandled;
+
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        if (_closeHandled) return;
+
+        bool stopServers = false;
         var running = _instances.Where(i => i.Form.IsServerRunning).ToList();
         if (running.Count > 0)
         {
@@ -408,15 +433,24 @@ public partial class ClusterManagerForm : Form
                 "Servers Running", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
 
             if (result == DialogResult.Cancel) { e.Cancel = true; return; }
-            if (result == DialogResult.Yes)
-                foreach (var inst in running)
-                    await inst.Form.ShutdownAsync();
+            stopServers = result == DialogResult.Yes;
         }
 
-        // Dispose all instances
+        // async void FormClosing: without cancelling, the app exits at the first
+        // await while servers are still mid-shutdown. Hold the close open, shut
+        // down every instance (saves each one's settings — including stopped
+        // instances), then re-close with the guard flag set.
+        e.Cancel = true;
+
+        foreach (var inst in _instances)
+            await inst.Form.ShutdownAsync(stopServer: stopServers);
+
         foreach (var inst in _instances)
             if (!inst.Form.IsDisposed)
                 inst.Form.Dispose();
+
+        _closeHandled = true;
+        BeginInvoke(Close);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

@@ -24,14 +24,24 @@ public static class WinFormsExtensions
         string timestamp = DateTime.Now.ToString("HH:mm:ss");
         tb.AppendText($"[{timestamp}] {message}{Environment.NewLine}");
 
-        // Keep the buffer from growing unbounded
-        const int maxLines = 2000;
-        if (tb.Lines.Length > maxLines)
+        // Keep the buffer from growing unbounded. Check TextLength (cheap) each
+        // call — materializing tb.Lines per append is O(buffer) and made long
+        // installs progressively slower.
+        const int maxChars  = 600_000;
+        const int keepChars = 300_000;
+        if (tb.TextLength > maxChars)
         {
-            tb.ReadOnly = false;
-            var lines = tb.Lines;
-            tb.Lines = lines[^maxLines..];
-            tb.ReadOnly = true;
+            string text = tb.Text;
+            // Cut on a line boundary just past the overflow point
+            int cut = text.IndexOf('\n', text.Length - keepChars);
+            if (cut >= 0)
+            {
+                bool wasReadOnly = tb.ReadOnly;
+                tb.ReadOnly = false;
+                tb.Select(0, cut + 1);
+                tb.SelectedText = "";
+                tb.ReadOnly = wasReadOnly;
+            }
         }
 
         if (autoScroll && tb.IsHandleCreated)

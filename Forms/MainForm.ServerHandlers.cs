@@ -4,6 +4,15 @@ partial class MainForm
 {
     private async void BtnServerAction_Click(object? sender, EventArgs e)
     {
+        // An install/update is in progress — the button reads "Cancel".
+        // _serverManager.State is still Stopped/NotInstalled here, so without
+        // this guard the click would start a second install (or the server).
+        if (_isInstalling)
+        {
+            _installCts?.Cancel();
+            return;
+        }
+
         switch (_serverManager.State)
         {
             case ServerState.NotInstalled:
@@ -18,10 +27,6 @@ partial class MainForm
             case ServerState.Running:
             case ServerState.Starting:
                 await StopServerAsync();
-                break;
-
-            case ServerState.Installing:
-                _installCts?.Cancel();
                 break;
         }
     }
@@ -69,7 +74,8 @@ partial class MainForm
             if (choice == DialogResult.No) copySource = null;
         }
 
-        _installCts = new CancellationTokenSource();
+        _installCts   = new CancellationTokenSource();
+        _isInstalling = true;
         UpdateServerState(ServerState.Installing);
         progressBar.Visible = true;
         progressBar.Value   = 0;
@@ -99,7 +105,10 @@ partial class MainForm
         catch (OperationCanceledException)
         {
             AppendConsole("Installation cancelled.", Color.Gray);
-            UpdateServerState(ServerState.NotInstalled);
+            // Re-check what's actually on disk — a cancelled *update* still has
+            // an installed server, so don't blindly show NotInstalled.
+            _serverManager.InitializeState();
+            UpdateServerState(_serverManager.State);
         }
         catch (Exception ex)
         {
@@ -112,7 +121,8 @@ partial class MainForm
         {
             progressBar.Visible = false;
             lblProgress.Visible = false;
-            _installCts = null;
+            _installCts   = null;
+            _isInstalling = false;
         }
     }
 
@@ -168,8 +178,9 @@ partial class MainForm
         BuildConfigFromUi();
         _configManager.SaveSettings(_config);
 
-        // Write Game.ini from config
-        _configManager.WriteGameIni(_configManager.GenerateDefaultGameIni(_config));
+        // Update the managed keys in Game.ini without clobbering manual edits
+        // made in the Config Editor tab.
+        _configManager.ApplyManagedGameIniValues(_config);
 
         _serverManager.ConfigureCrashDetection(
             _config.EnableCrashDetection,

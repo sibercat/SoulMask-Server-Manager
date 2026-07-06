@@ -8,10 +8,9 @@ partial class MainForm
 
     // ── Menu & Status ────────────────────────────────────────────────
     protected MenuStrip menuStrip;
-    protected ToolStripMenuItem menuFile, menuView, menuHelp;
+    protected ToolStripMenuItem menuFile, menuHelp;
     protected ToolStripMenuItem menuOpenServerFolder, menuOpenBackupFolder, menuExit;
     protected ToolStripMenuItem menuOpenGameIni, menuOpenEngineIni;
-    protected ToolStripMenuItem menuThemeDark, menuThemeLight;
     protected StatusStrip statusStrip;
     protected ToolStripStatusLabel tsStatus, tsUptime, tsPlayers, tsNextRestart, tsNextBackup;
 
@@ -285,16 +284,11 @@ partial class MainForm
             new ToolStripSeparator(), menuOpenGameIni, menuOpenEngineIni,
             new ToolStripSeparator(), menuExit]);
 
-        menuView = new ToolStripMenuItem("View");
-        menuThemeDark    = new ToolStripMenuItem("🌙  Dark Theme")  { Tag = "dark" };
-        menuThemeLight   = new ToolStripMenuItem("☀️  Light Theme") { Tag = "light" };
-        menuView.DropDownItems.AddRange([menuThemeDark, menuThemeLight]);
-
         menuHelp = new ToolStripMenuItem("Help");
         var menuAbout = new ToolStripMenuItem("About");
         menuHelp.DropDownItems.Add(menuAbout);
 
-        menuStrip.Items.AddRange([menuFile, menuView, menuHelp]);
+        menuStrip.Items.AddRange([menuFile, menuHelp]);
     }
 
     // ═════════════════════════════════════════════════════════════════

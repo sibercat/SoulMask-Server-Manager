@@ -112,10 +112,20 @@ public class RconClient
     // whether the ban list is enabled, then we immediately unban so they can rejoin.
     public async Task<bool> KickPlayerAsync(string host, int port, string steamId)
     {
-        await ExecuteAsync(host, port, $"usp 1 1 {steamId}"); // adds to ban list → instant kick
+        var ban = await ExecuteAsync(host, port, $"usp 1 1 {steamId}"); // adds to ban list → instant kick
+        if (ban == null) return false;
+
         await Task.Delay(500);
-        await ExecuteAsync(host, port, $"usp 1 0 {steamId}"); // removes from ban list → can rejoin
-        return true;
+        var unban = await ExecuteAsync(host, port, $"usp 1 0 {steamId}"); // removes from ban list → can rejoin
+        if (unban == null)
+        {
+            // The ban went through but the unban didn't — retry once so the
+            // player isn't silently left permanently banned.
+            _logger.Warning($"Kick: unban of {steamId} failed, retrying...");
+            await Task.Delay(1000);
+            unban = await ExecuteAsync(host, port, $"usp 1 0 {steamId}");
+        }
+        return unban != null;
     }
 
     // BackupDatabaseByHour (alias: bkh) — write world save to timestamped file on disk

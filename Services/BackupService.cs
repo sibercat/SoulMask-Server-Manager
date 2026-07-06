@@ -48,7 +48,7 @@ public class BackupService
         }
     }
 
-    public async Task<string?> CreateBackupAsync()
+    public async Task<string?> CreateBackupAsync(string? preservePath = null)
     {
         string savedDir = Path.Combine(_serverFilesDir, "WS", "Saved");
         if (!Directory.Exists(savedDir))
@@ -85,7 +85,7 @@ public class BackupService
             });
 
             _logger.Info($"Backup created: {backupPath}");
-            CleanOldBackups();
+            CleanOldBackups(preservePath);
             BackupCreated?.Invoke(this, backupPath);
             return backupPath;
         }
@@ -101,16 +101,29 @@ public class BackupService
     public async Task<bool> RestoreBackupAsync(string backupPath)
     {
         string savedDir = Path.Combine(_serverFilesDir, "WS", "Saved");
+        // Extract next to Saved so the final swap is a same-volume Directory.Move
+        string tempDir = Path.Combine(_serverFilesDir, "WS", "_restore_tmp");
         try
         {
-            // Safety backup before overwrite
-            await CreateBackupAsync();
+            // 1. Extract FIRST — a missing/corrupt zip fails here, before the
+            //    live save is touched.
+            await Task.Run(() =>
+            {
+                if (Directory.Exists(tempDir))
+                    Directory.Delete(tempDir, recursive: true);
+                ZipFile.ExtractToDirectory(backupPath, tempDir);
+            });
 
+            // 2. Safety backup of the current state. Pass backupPath so the
+            //    retention cleanup can't delete the zip being restored.
+            await CreateBackupAsync(preservePath: backupPath);
+
+            // 3. Swap the extracted files into place.
             await Task.Run(() =>
             {
                 if (Directory.Exists(savedDir))
                     Directory.Delete(savedDir, recursive: true);
-                ZipFile.ExtractToDirectory(backupPath, savedDir);
+                Directory.Move(tempDir, savedDir);
             });
 
             _logger.Info($"Backup restored from: {backupPath}");
@@ -120,6 +133,15 @@ public class BackupService
         {
             _logger.Error("Restore failed.", ex);
             return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(tempDir))
+                    Directory.Delete(tempDir, recursive: true);
+            }
+            catch { /* best effort */ }
         }
     }
 
@@ -138,11 +160,14 @@ public class BackupService
         catch (Exception ex) { _logger.Error("Failed to delete backup.", ex); return false; }
     }
 
-    private void CleanOldBackups()
+    private void CleanOldBackups(string? preservePath = null)
     {
         var backups = GetBackups();
         foreach (var (path, _, _) in backups.Skip(_keepCount))
         {
+            if (preservePath != null &&
+                string.Equals(path, preservePath, StringComparison.OrdinalIgnoreCase))
+                continue;
             try { File.Delete(path); _logger.Info($"Deleted old backup: {path}"); }
             catch { /* best effort */ }
         }

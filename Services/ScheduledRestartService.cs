@@ -42,10 +42,12 @@ public class ScheduledRestartService
         if (!_enabled) return;
         double remaining = (_nextRestart - DateTime.Now).TotalMinutes;
 
-        // Issue warnings at configured threshold, 5 min, and 1 min
+        // Issue warnings at configured threshold, 5 min, and 1 min.
+        // Window is a full minute (deduped by _warnedMinutes) so a delayed
+        // timer tick can't silently skip a warning.
         foreach (int warnAt in new[] { _warningMinutes, 5, 1 })
         {
-            if (remaining <= warnAt && remaining > warnAt - 0.2 && _warnedMinutes.Add(warnAt))
+            if (remaining <= warnAt && remaining > warnAt - 1 && _warnedMinutes.Add(warnAt))
                 WarningIssued?.Invoke(this, warnAt);
         }
 
@@ -63,10 +65,10 @@ public class ScheduledRestartService
         if (_useFixedTimes && _fixedTimes.Count > 0)
         {
             var now = after.TimeOfDay;
-            // Find next fixed time today
-            var nextToday = _fixedTimes.Where(t => t > now).OrderBy(t => t).FirstOrDefault();
-            _nextRestart = nextToday != default
-                ? after.Date.Add(nextToday)
+            // Next fixed time later today, else the earliest one tomorrow.
+            var upcoming = _fixedTimes.Where(t => t > now).ToList();
+            _nextRestart = upcoming.Count > 0
+                ? after.Date.Add(upcoming.Min())
                 : after.Date.AddDays(1).Add(_fixedTimes.Min());
         }
         else

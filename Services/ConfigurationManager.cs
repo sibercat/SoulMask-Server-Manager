@@ -6,7 +6,7 @@ namespace SoulMaskServerManager.Services;
 public class ConfigurationManager
 {
     private readonly string _rootDir;
-    private readonly FileLogger _logger;
+    private readonly FileLogger? _logger;
 
     private string SettingsFile   => Path.Combine(_rootDir, "launcher_settings.json");
     public  string ServerFilesDir => Path.Combine(_rootDir, "ServerFiles");
@@ -29,7 +29,7 @@ public class ConfigurationManager
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public ConfigurationManager(string rootDir, FileLogger logger)
+    public ConfigurationManager(string rootDir, FileLogger? logger)
     {
         _rootDir = rootDir;
         _logger  = logger;
@@ -48,7 +48,7 @@ public class ConfigurationManager
         }
         catch (Exception ex)
         {
-            _logger.Error("Failed to load settings, using defaults.", ex);
+            _logger?.Error("Failed to load settings, using defaults.", ex);
             return new ServerConfiguration();
         }
     }
@@ -62,7 +62,7 @@ public class ConfigurationManager
         }
         catch (Exception ex)
         {
-            _logger.Error("Failed to save settings.", ex);
+            _logger?.Error("Failed to save settings.", ex);
         }
     }
 
@@ -72,7 +72,7 @@ public class ConfigurationManager
     {
         if (!File.Exists(GameIniPath)) return GenerateDefaultGameIni(new ServerConfiguration());
         try { return File.ReadAllText(GameIniPath); }
-        catch (Exception ex) { _logger.Error("Failed to read Game.ini", ex); return ""; }
+        catch (Exception ex) { _logger?.Error("Failed to read Game.ini", ex); return ""; }
     }
 
     public void WriteGameIni(string content)
@@ -82,7 +82,30 @@ public class ConfigurationManager
             Directory.CreateDirectory(ConfigDir);
             File.WriteAllText(GameIniPath, content);
         }
-        catch (Exception ex) { _logger.Error("Failed to write Game.ini", ex); }
+        catch (Exception ex) { _logger?.Error("Failed to write Game.ini", ex); }
+    }
+
+    /// <summary>
+    /// Updates only the keys this app manages inside Game.ini, preserving any
+    /// manual edits made in the Config Editor tab (e.g. DayTimeSpeedRate).
+    /// Generates the full default file only when Game.ini doesn't exist yet.
+    /// </summary>
+    public void ApplyManagedGameIniValues(ServerConfiguration cfg)
+    {
+        string content = File.Exists(GameIniPath)
+            ? ReadGameIni()
+            : GenerateDefaultGameIni(cfg);
+
+        const string gameMode = "/Script/WS.WSGameMode";
+        content = SetIniValue(content, gameMode, "ServerName",       cfg.ServerName);
+        content = SetIniValue(content, gameMode, "ServerPassword",   cfg.ServerPassword);
+        content = SetIniValue(content, gameMode, "AdminPassword",    cfg.AdminPassword);
+        content = SetIniValue(content, gameMode, "MaxPlayers",       cfg.MaxPlayers.ToString());
+        content = SetIniValue(content, gameMode, "SaveGameInterval", cfg.SaveInterval.ToString());
+        content = SetIniValue(content, gameMode, "bPVEMode",         cfg.PveMode.ToString().ToLower());
+        content = SetIniValue(content, "/Script/Engine.GameSession", "MaxPlayers", cfg.MaxPlayers.ToString());
+
+        WriteGameIni(content);
     }
 
     public string GenerateDefaultGameIni(ServerConfiguration cfg) =>
@@ -108,7 +131,7 @@ MaxPlayers={cfg.MaxPlayers}
     {
         if (!File.Exists(EngineIniPath)) return GenerateDefaultEngineIni(cfg ?? new ServerConfiguration());
         try { return File.ReadAllText(EngineIniPath); }
-        catch (Exception ex) { _logger.Error("Failed to read Engine.ini", ex); return ""; }
+        catch (Exception ex) { _logger?.Error("Failed to read Engine.ini", ex); return ""; }
     }
 
     public void WriteEngineIni(string content)
@@ -118,7 +141,7 @@ MaxPlayers={cfg.MaxPlayers}
             Directory.CreateDirectory(ConfigDir);
             File.WriteAllText(EngineIniPath, content);
         }
-        catch (Exception ex) { _logger.Error("Failed to write Engine.ini", ex); }
+        catch (Exception ex) { _logger?.Error("Failed to write Engine.ini", ex); }
     }
 
     public string GenerateDefaultEngineIni(ServerConfiguration cfg) =>

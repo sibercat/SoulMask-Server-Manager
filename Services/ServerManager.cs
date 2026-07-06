@@ -90,6 +90,10 @@ public class ServerManager
 
     private void DoStart(ServerConfiguration cfg)
     {
+        // Reset the stop flag here (not just in Start) so crash detection works
+        // after RestartAsync and auto-restarts, which call DoStart directly.
+        _isStopping = false;
+
         // Cancel any previous load watcher
         _loadWatcherCts?.Cancel();
         _loadWatcherCts = new CancellationTokenSource();
@@ -157,10 +161,6 @@ public class ServerManager
 
             // Skip content from the previous run — seek to end so we only read
             // lines the server writes after this launch, not old log data.
-            fs.Seek(0, SeekOrigin.End);
-
-            // Skip content from previous run — seek to current end of file so we
-            // only read lines the server writes after this launch.
             fs.Seek(0, SeekOrigin.End);
 
             var deadline = DateTime.UtcNow.AddMinutes(15);
@@ -277,9 +277,15 @@ public class ServerManager
                 _restartAttempts++;
                 Emit($"Auto-restarting... attempt {_restartAttempts}/{_maxRestartAttempts}");
                 _logger.Info($"Auto-restart attempt {_restartAttempts}/{_maxRestartAttempts}");
-                Thread.Sleep(5000);
-                DoStart(_lastConfig);
-                AutoRestarted?.Invoke(this, EventArgs.Empty);
+                var cfg = _lastConfig;
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(5000);
+                    // Skip if the user started/stopped the server during the delay
+                    if (_isStopping || _state is ServerState.Running or ServerState.Starting) return;
+                    DoStart(cfg);
+                    AutoRestarted?.Invoke(this, EventArgs.Empty);
+                });
             }
             else
             {
@@ -394,15 +400,15 @@ public class ServerManager
         sb.Append($" -QueryPort={cfg.QueryPort}");
         sb.Append($" -EchoPort={cfg.EchoPort}");
 
-        // Identity
-        sb.Append($" -SteamServerName=\"{cfg.ServerName}\"");
+        // Identity — embedded quotes would break the quoted args, so strip them
+        sb.Append($" -SteamServerName=\"{StripQuotes(cfg.ServerName)}\"");
         sb.Append($" -MaxPlayers={cfg.MaxPlayers}");
 
         if (!string.IsNullOrWhiteSpace(cfg.ServerPassword))
-            sb.Append($" -PSW=\"{cfg.ServerPassword}\"");
+            sb.Append($" -PSW=\"{StripQuotes(cfg.ServerPassword)}\"");
 
         if (!string.IsNullOrWhiteSpace(cfg.AdminPassword))
-            sb.Append($" -adminpsw=\"{cfg.AdminPassword}\"");
+            sb.Append($" -adminpsw=\"{StripQuotes(cfg.AdminPassword)}\"");
 
         if (cfg.PveMode)
             sb.Append(" -pve");
@@ -410,7 +416,7 @@ public class ServerManager
         // RCON (optional — requires password + bind address)
         if (cfg.RconEnabled && !string.IsNullOrWhiteSpace(cfg.RconPassword))
         {
-            sb.Append($" -rconpsw=\"{cfg.RconPassword}\"");
+            sb.Append($" -rconpsw=\"{StripQuotes(cfg.RconPassword)}\"");
             sb.Append($" -rconaddr={cfg.RconAddress}");
             sb.Append($" -rconport={cfg.RconPort}");
         }
@@ -440,8 +446,13 @@ public class ServerManager
         return sb.ToString();
     }
 
+    private static string StripQuotes(string s) => s.Replace("\"", "");
+
     private void SetState(ServerState s)
     {
+        // A server that made it back to Running has recovered — give future
+        // crashes a fresh restart budget instead of exhausting it over weeks.
+        if (s == ServerState.Running) _restartAttempts = 0;
         _state = s;
         StateChanged?.Invoke(this, s);
     }

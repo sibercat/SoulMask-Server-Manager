@@ -25,10 +25,12 @@ public partial class MainForm : Form
     private bool _isDirty;
     private DateTime _serverStartTime;
     private CancellationTokenSource? _installCts;
+    // _serverManager.State never becomes Installing (installs run through SteamCmdService),
+    // so the action-button handler needs its own flag to route clicks to Cancel.
+    private bool _isInstalling;
 
     // ── Timers ────────────────────────────────────────────────────────
     private readonly System.Windows.Forms.Timer _uptimeTimer = new() { Interval = 1000 };
-    private readonly System.Windows.Forms.Timer _playerTimer = new() { Interval = 30_000 };
 
     // ── Cluster manager integration ───────────────────────────────────
     /// <summary>Fired whenever this instance's server state changes. Used by ClusterManagerForm to update its status strip and tab labels.</summary>
@@ -64,11 +66,12 @@ public partial class MainForm : Form
 
         InitializeComponent();
 
-        // When embedded in ClusterManagerForm, hide chrome handled by the outer form
+        // When embedded in ClusterManagerForm, hide chrome handled by the outer form.
+        // (! — assigned by InitializeComponent above; flow analysis can't see that.)
         if (_isEmbedded)
         {
-            menuStrip.Visible   = false;
-            statusStrip.Visible = false;
+            menuStrip!.Visible   = false;
+            statusStrip!.Visible = false;
         }
 
         // Load saved config
@@ -83,9 +86,9 @@ public partial class MainForm : Form
         // Wire up all events
         WireEvents();
 
-        // Apply saved theme
-        ThemeManager.Apply(this, _config.Theme);
-        if (!_isEmbedded) UpdateThemeMenuChecks();
+        // The app is dark-mode only (Program.cs forces SetColorMode(Dark)) —
+        // ignore any stale Theme value left in an old launcher_settings.json.
+        ThemeManager.Apply(this, AppTheme.Dark);
 
         // Windows re-applies dark mode theming when the form is first shown,
         // overriding our SetWindowTheme call in the constructor. Re-apply it
@@ -108,16 +111,20 @@ public partial class MainForm : Form
         Path.Combine(AppContext.BaseDirectory, "SoulMaskServer"),
         "Server", embedded: false) { }
 
-    /// <summary>Graceful shutdown called by ClusterManagerForm before closing.</summary>
-    public async Task ShutdownAsync()
+    /// <summary>
+    /// Graceful shutdown called by ClusterManagerForm before closing.
+    /// Pass stopServer=false to leave a running server up (it will be
+    /// re-attached on next launch) while still saving settings.
+    /// </summary>
+    public async Task ShutdownAsync(bool stopServer = true)
     {
-        if (_serverManager.IsRunning)
+        if (stopServer && _serverManager.IsRunning)
             await _serverManager.StopAsync(_rconClient, _config);
 
         BuildConfigFromUi();
         _configManager.SaveSettings(_config);
         _uptimeTimer.Stop();
-        _playerTimer.Stop();
+        _playerRefreshTimer.Stop();
         _scheduleService.Dispose();
         _backupService.Dispose();
         _logger.Info($"Instance '{_instanceName}' shut down.");
@@ -135,8 +142,6 @@ public partial class MainForm : Form
         menuOpenGameIni.Click      += (_, _) => OpenFile(_configManager.GameIniPath);
         menuOpenEngineIni.Click    += (_, _) => OpenFile(_configManager.EngineIniPath);
         menuExit.Click             += (_, _) => Close();
-        menuThemeDark.Click        += (_, _) => ApplyTheme(AppTheme.Dark);
-        menuThemeLight.Click       += (_, _) => ApplyTheme(AppTheme.Light);
 
         // Dashboard
         btnServerAction.Click += BtnServerAction_Click;
@@ -293,28 +298,6 @@ public partial class MainForm : Form
         // Logger events — show in log tab
         _logger.LogWritten += (_, e) =>
             this.InvokeIfRequired(() => UpdateLogTab(e.Level, e.Message));
-    }
-
-    // ── Theme ─────────────────────────────────────────────────────────
-    private void ApplyTheme(AppTheme theme)
-    {
-        _config.Theme = theme;
-        _configManager.SaveSettings(_config);
-
-        var result = MessageBox.Show(
-            "Theme change requires a restart to apply fully.\nRestart now?",
-            "Restart Required",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
-
-        if (result == DialogResult.Yes)
-            Application.Restart();
-    }
-
-    private void UpdateThemeMenuChecks()
-    {
-        menuThemeDark.Checked  = _config.Theme == AppTheme.Dark;
-        menuThemeLight.Checked = _config.Theme == AppTheme.Light;
     }
 
     // ── Server State ─────────────────────────────────────────────────
@@ -598,10 +581,14 @@ public partial class MainForm : Form
     }
 
     // ── Form Closing ──────────────────────────────────────────────────
+    private bool _closeHandled;
+
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        if (_closeHandled) return;
         _logger.Info($"Form closing — reason: {e.CloseReason}");
 
+        bool stopServer = false;
         if (_serverManager.IsRunning)
         {
             var result = MessageBox.Show(
@@ -609,18 +596,17 @@ public partial class MainForm : Form
                 "Server Running", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
 
             if (result == DialogResult.Cancel) { e.Cancel = true; return; }
-            if (result == DialogResult.Yes)    await _serverManager.StopAsync(_rconClient, _config);
+            stopServer = result == DialogResult.Yes;
         }
 
-        // Save current config (including theme)
-        BuildConfigFromUi();
-        _configManager.SaveSettings(_config);
-
-        _uptimeTimer.Stop();
-        _playerTimer.Stop();
-        _scheduleService.Dispose();
-        _backupService.Dispose();
+        // async void FormClosing: the close would otherwise proceed at the first
+        // await, tearing the form down mid-shutdown. Hold it open, finish the
+        // async work, then re-close with the guard flag set.
+        e.Cancel = true;
+        await ShutdownAsync(stopServer);
         _logger.Info("Application closed.");
+        _closeHandled = true;
+        BeginInvoke(Close);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
