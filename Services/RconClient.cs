@@ -13,6 +13,9 @@ public class RconClient
 {
     private const int CONNECT_TIMEOUT_MS = 5_000;
     private const int READ_TIMEOUT_MS    = 3_000;
+    // The server does not close the connection after replying, so a response is
+    // considered finished once no new bytes arrive for this long.
+    private const int IDLE_TIMEOUT_MS    = 300;
 
     private readonly FileLogger _logger;
     public RconClient(FileLogger logger) => _logger = logger;
@@ -41,30 +44,88 @@ public class RconClient
             var stream = client.GetStream();
             stream.WriteTimeout = READ_TIMEOUT_MS;
 
-            byte[] cmd = Encoding.UTF8.GetBytes(command + "\r\n");
-            await stream.WriteAsync(cmd);
-            await stream.FlushAsync();
-
-            var buf = new byte[4096];
-            var sb  = new StringBuilder();
-            // NetworkStream.ReadTimeout does not apply to ReadAsync — use CancellationToken instead.
-            using var cts = new CancellationTokenSource(READ_TIMEOUT_MS);
-            try
-            {
-                int n;
-                while ((n = await stream.ReadAsync(buf, cts.Token)) > 0)
-                    sb.Append(Encoding.UTF8.GetString(buf, 0, n));
-            }
-            catch (OperationCanceledException) { /* read timeout = end of response */ }
-            catch (IOException) { /* connection closed by server */ }
-
-            return sb.ToString();
+            await SendAsync(stream, command);
+            return await ReadResponseAsync(client, stream);
         }
         catch (Exception ex)
         {
             _logger.Warning($"EchoPort command '{command}' failed: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Runs several commands over a SINGLE connection and returns each response
+    /// (null entry = that command produced no reply). Reusing one connection
+    /// matters for bulk work: reconnecting per command costs a full
+    /// connect/handshake/idle-wait cycle each time.
+    /// </summary>
+    public async Task<List<string?>?> ExecuteManyAsync(string host, int port, IEnumerable<string> commands,
+        IProgress<int>? progress = null)
+    {
+        var results = new List<string?>();
+        try
+        {
+            using var client = await ConnectAsync(host, port);
+            var stream = client.GetStream();
+            stream.WriteTimeout = READ_TIMEOUT_MS;
+
+            int done = 0;
+            foreach (var command in commands)
+            {
+                await SendAsync(stream, command);
+                results.Add(await ReadResponseAsync(client, stream));
+                progress?.Report(++done);
+            }
+            return results;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"EchoPort batch failed after {results.Count} command(s): {ex.Message}");
+            // Partial results are still useful to the caller
+            return results.Count > 0 ? results : null;
+        }
+    }
+
+    private static async Task SendAsync(NetworkStream stream, string command)
+    {
+        byte[] cmd = Encoding.UTF8.GetBytes(command + "\r\n");
+        await stream.WriteAsync(cmd);
+        await stream.FlushAsync();
+    }
+
+    /// <summary>
+    /// Reads one command's response. Polls Available instead of cancelling a
+    /// pending ReadAsync — a cancelled read can leave the socket unusable, which
+    /// would break the next command on a shared connection.
+    /// </summary>
+    private static async Task<string> ReadResponseAsync(TcpClient client, NetworkStream stream)
+    {
+        var sb    = new StringBuilder();
+        var buf   = new byte[4096];
+        long start    = Environment.TickCount64;
+        long lastData = start;
+
+        while (true)
+        {
+            if (client.Available > 0)
+            {
+                int n = await stream.ReadAsync(buf);   // data is buffered — won't block
+                if (n <= 0) break;                     // server closed the connection
+                sb.Append(Encoding.UTF8.GetString(buf, 0, n));
+                lastData = Environment.TickCount64;
+                continue;
+            }
+
+            long now = Environment.TickCount64;
+            if (sb.Length > 0 && now - lastData >= IDLE_TIMEOUT_MS) break; // response complete
+            if (sb.Length == 0 && now - start   >= READ_TIMEOUT_MS) break; // no reply at all
+            if (now - start >= READ_TIMEOUT_MS * 2) break;                 // hard cap
+
+            await Task.Delay(25);
+        }
+
+        return sb.ToString();
     }
 
     // List_OnlinePlayers (alias: lp) — players currently connected.

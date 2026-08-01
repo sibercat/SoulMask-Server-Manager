@@ -15,6 +15,10 @@ partial class MainForm
     private List<(string Key, double Value)> _currentPresetRows = [];
     private bool _gameplayDirty;
 
+    // Settings edited since the last live apply — Apply Live pushes all of these,
+    // not just whichever row happens to be selected.
+    private readonly HashSet<string> _liveDirtyKeys = [];
+
     private const string CustomPresetPrefix = "★ ";
     private static readonly HashSet<string> BuiltinKeys = ["0", "1", "2"];
 
@@ -142,6 +146,7 @@ partial class MainForm
         }
 
         _currentPresetRows = preset.Select(kv => (kv.Key, kv.Value)).ToList();
+        _liveDirtyKeys.Clear();   // edits belong to the preset they were made in
         ApplyGameplayFilter(txtGameplaySearch.Text);
         // Custom presets always start dirty — reminds user to press Save to write to GameXishu.json.
         SetGameplayDirty(IsCustomPreset);
@@ -367,25 +372,81 @@ partial class MainForm
 
     private async Task ApplyGameplaySettingLiveAsync()
     {
-        if (dgvGameplay.CurrentRow == null) return;
-
-        string key    = dgvGameplay.CurrentRow.Cells["Setting"].Value?.ToString() ?? "";
-        string valStr = dgvGameplay.CurrentRow.Cells["Value"].Value?.ToString() ?? "";
-
-        if (string.IsNullOrWhiteSpace(key)) return;
-
-        if (!double.TryParse(valStr, System.Globalization.NumberStyles.Any,
-                System.Globalization.CultureInfo.InvariantCulture, out _))
+        if (!_serverManager.IsRunning)
         {
-            MessageBox.Show($"'{valStr}' is not a valid number.", "Invalid Value",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("Apply Live sends settings to a running server.\nStart the server first.",
+                "Server Not Running", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        bool ok = await _rconClient.ExecuteAsync("127.0.0.1", _config.EchoPort, $"sc {key} {valStr}") != null;
-        AppendConsole(
-            ok ? $"[Gameplay] Applied live: {key} = {valStr}" : $"[Gameplay] Apply failed: {key}",
-            ok ? Color.FromArgb(78, 201, 176) : ThemeManager.StateStopped);
+        // Everything edited since the last apply — falling back to the selected
+        // row so a single setting can still be (re)applied on demand.
+        var pending = _currentPresetRows
+            .Where(r => _liveDirtyKeys.Contains(r.Key))
+            .Select(r => (r.Key, Value: FormatValue(r.Value)))
+            .ToList();
+
+        if (pending.Count == 0)
+        {
+            if (dgvGameplay.CurrentRow == null) return;
+
+            string key    = dgvGameplay.CurrentRow.Cells["Setting"].Value?.ToString() ?? "";
+            string valStr = dgvGameplay.CurrentRow.Cells["Value"].Value?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(key)) return;
+
+            if (!double.TryParse(valStr, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out _))
+            {
+                MessageBox.Show($"'{valStr}' is not a valid number.", "Invalid Value",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            pending.Add((key, valStr));
+        }
+
+        btnApplyLive.Enabled = false;
+        try
+        {
+            AppendConsole($"[Gameplay] Applying {pending.Count} setting{(pending.Count == 1 ? "" : "s")} live...",
+                Color.FromArgb(255, 152, 0));
+
+            // One connection for the whole batch — reconnecting per setting is
+            // slow enough to look like a hang once more than a few are pending.
+            var responses = await _rconClient.ExecuteManyAsync(
+                "127.0.0.1", _config.EchoPort,
+                pending.Select(p => $"sc {p.Key} {p.Value}"));
+
+            if (responses == null)
+            {
+                AppendConsole("[Gameplay] Apply failed — could not reach the server on EchoPort.",
+                    ThemeManager.StateStopped);
+                return;
+            }
+
+            int applied = 0;
+            for (int i = 0; i < pending.Count; i++)
+            {
+                bool ok = i < responses.Count && responses[i] != null;
+                if (ok)
+                {
+                    applied++;
+                    _liveDirtyKeys.Remove(pending[i].Key);
+                }
+                AppendConsole(
+                    ok ? $"[Gameplay]   {pending[i].Key} = {pending[i].Value}"
+                       : $"[Gameplay]   {pending[i].Key} — FAILED",
+                    ok ? Color.FromArgb(78, 201, 176) : ThemeManager.StateStopped);
+            }
+
+            AppendConsole(
+                $"[Gameplay] Applied {applied}/{pending.Count} live. " +
+                "Live changes do NOT persist across a restart — press Save to keep them.",
+                applied == pending.Count ? Color.FromArgb(78, 201, 176) : ThemeManager.StateStopped);
+        }
+        finally
+        {
+            btnApplyLive.Enabled = true;
+        }
     }
 
     // ── Grid cell edit ────────────────────────────────────────────────
@@ -420,6 +481,7 @@ partial class MainForm
             }
         }
 
+        _liveDirtyKeys.Add(key);
         SetGameplayDirty(true);
     }
 

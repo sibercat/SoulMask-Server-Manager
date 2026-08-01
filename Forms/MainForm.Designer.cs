@@ -232,7 +232,7 @@ partial class MainForm
         _toolTip.SetToolTip(btnSaveAsPreset,   "Save the current values as a new named custom preset.");
         _toolTip.SetToolTip(btnDeletePreset,          "Delete the selected custom preset.\nBuilt-in server presets (0/1/2) cannot be deleted.");
         _toolTip.SetToolTip(btnResetGameplayDefaults, "Reset all values in the current preset to the original game defaults.\nA backup is taken automatically on first load.");
-        _toolTip.SetToolTip(btnApplyLive,      "Apply the selected setting to the running server immediately via EchoPort.\nNo restart needed — uses the 'sc' console command.");
+        _toolTip.SetToolTip(btnApplyLive,      "Apply every setting you have edited to the running server immediately via EchoPort.\nIf nothing is edited, applies the selected row.\nNo restart needed — uses the 'sc' console command.\nLive changes are lost on restart unless you also press Save.");
 
         // Settings — Performance
         _toolTip.SetToolTip(chkUseAllCores,      "Use all available CPU cores. Uncheck to manually select cores below.");
