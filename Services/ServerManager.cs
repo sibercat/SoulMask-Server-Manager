@@ -23,6 +23,8 @@ public class ServerManager
     private CancellationTokenSource? _loadWatcherCts;
     private string LogPath => Path.Combine(_serverFilesDir, "WS", "Saved", "Logs", "WS.log");
     private const string LoadedMarker = "logSoulmaskSession: [SERVER_LIST] registe server soulmask session succeed.";
+    /// <summary>How long to wait for the log marker before falling back to an EchoPort probe.</summary>
+    private static readonly TimeSpan EchoPortFallbackDelay = TimeSpan.FromMinutes(5);
 
     // ── Events ───────────────────────────────────────────────────────
     public event EventHandler<ServerState>? StateChanged;
@@ -127,68 +129,82 @@ public class ServerManager
 
         // Watch WS.log for the "session registered" line instead of setting Running immediately.
         // State stays Starting until the server has fully loaded.
-        _ = WatchForServerLoadedAsync(_loadWatcherCts.Token);
+        _ = WatchForServerLoadedAsync(cfg.EchoPort, _loadWatcherCts.Token);
     }
 
     // ── Load Detection ───────────────────────────────────────────────
 
-    private async Task WatchForServerLoadedAsync(CancellationToken ct)
+    private async Task WatchForServerLoadedAsync(int echoPort, CancellationToken ct)
     {
-        // Wait up to 60 s for WS.log to appear (the server creates it a few seconds after launch)
-        for (int i = 0; i < 60 && !ct.IsCancellationRequested; i++)
-        {
-            if (File.Exists(LogPath)) break;
-            await Task.Delay(1000, ct).ConfigureAwait(false);
-        }
-
-        if (ct.IsCancellationRequested) return;
-
-        if (!File.Exists(LogPath))
-        {
-            _logger.Warning("WS.log not found after 60 s — marking server as Running anyway.");
-            Emit("Could not detect load from WS.log — showing as Running.");
-            if (_state == ServerState.Starting) SetState(ServerState.Running);
-            return;
-        }
-
         Emit("Waiting for server to finish loading (watching WS.log)...");
+
+        // Skip whatever is already in WS.log — otherwise the PREVIOUS run's
+        // "loaded" marker would immediately mark this run as Running.
+        var tailer = new LogTailer(LogPath, skipExistingContent: true);
+
+        var launchUtc     = DateTime.UtcNow;
+        var deadline      = launchUtc.AddMinutes(15);
+        var lastProbe     = launchUtc;
+        var lastHeartbeat = launchUtc;
+        bool noticedRotation = false;
 
         try
         {
-            using var fs = new FileStream(LogPath, FileMode.Open, FileAccess.Read,
-                                          FileShare.ReadWrite | FileShare.Delete);
-            using var sr = new StreamReader(fs);
-
-            // Skip content from the previous run — seek to end so we only read
-            // lines the server writes after this launch, not old log data.
-            fs.Seek(0, SeekOrigin.End);
-
-            var deadline = DateTime.UtcNow.AddMinutes(15);
-
             while (!ct.IsCancellationRequested && _state == ServerState.Starting)
             {
-                string? line = await sr.ReadLineAsync(ct).ConfigureAwait(false);
+                string text = tailer.ReadNew();
 
-                if (line == null)
+                if (tailer.RotationDetected && !noticedRotation)
                 {
-                    if (DateTime.UtcNow > deadline)
-                    {
-                        _logger.Warning("Server load timeout (15 min) — marking as Running.");
-                        Emit("Server load timeout — showing as Running.");
-                        SetState(ServerState.Running);
-                        return;
-                    }
-                    await Task.Delay(500, ct).ConfigureAwait(false);
-                    continue;
+                    // Expected on every restart: Unreal rotates WS.log at startup.
+                    noticedRotation = true;
+                    _logger.Info("WS.log was rotated by the server — following the new file.");
                 }
 
-                if (line.Contains(LoadedMarker, StringComparison.OrdinalIgnoreCase))
+                if (text.Length > 0 && ContainsLoadedMarker(text))
                 {
                     _logger.Info("Server fully loaded (session registered in Steam).");
                     Emit("Server fully loaded and registered.");
                     SetState(ServerState.Running);
                     return;
                 }
+
+                // Last-resort signal, deliberately late. Measured on a real server:
+                // EchoPort starts listening at ~35 s but the session marker lands at
+                // ~49 s, so probing early would report Running while the world is
+                // still loading. This only exists to recover if the marker never
+                // appears at all (e.g. a future game update changes the wording),
+                // in which case it beats sitting at Starting for the full timeout.
+                if (DateTime.UtcNow - launchUtc > EchoPortFallbackDelay &&
+                    DateTime.UtcNow - lastProbe > TimeSpan.FromSeconds(15))
+                {
+                    lastProbe = DateTime.UtcNow;
+                    if (await IsEchoPortOpenAsync(echoPort, ct).ConfigureAwait(false))
+                    {
+                        _logger.Warning($"Load marker never appeared, but EchoPort {echoPort} is accepting " +
+                                        "connections — marking as Running.");
+                        Emit("Server is responding on EchoPort — marking as Running.");
+                        SetState(ServerState.Running);
+                        return;
+                    }
+                }
+
+                // Progress heartbeat so a slow world load doesn't look like a hang
+                if (DateTime.UtcNow - lastHeartbeat > TimeSpan.FromSeconds(30))
+                {
+                    lastHeartbeat = DateTime.UtcNow;
+                    Emit($"Still loading... ({(int)(DateTime.UtcNow - launchUtc).TotalSeconds}s elapsed)");
+                }
+
+                if (DateTime.UtcNow > deadline)
+                {
+                    _logger.Warning("Server load timeout (15 min) — marking as Running.");
+                    Emit("Server load timeout — showing as Running.");
+                    SetState(ServerState.Running);
+                    return;
+                }
+
+                await Task.Delay(500, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { }
@@ -201,6 +217,25 @@ public class ServerManager
                 SetState(ServerState.Running);
             }
         }
+    }
+
+    /// <summary>Matches the load marker loosely so a log-format tweak doesn't break detection.</summary>
+    private static bool ContainsLoadedMarker(string text) =>
+        text.Contains("registe server soulmask session succeed",  StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("register server soulmask session succeed", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<bool> IsEchoPortOpenAsync(int port, CancellationToken ct)
+    {
+        try
+        {
+            using var client  = new System.Net.Sockets.TcpClient();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(2000);
+            await client.ConnectAsync(System.Net.IPAddress.Loopback, port, timeout.Token)
+                        .ConfigureAwait(false);
+            return client.Connected;
+        }
+        catch { return false; }
     }
 
     // ── Stop ─────────────────────────────────────────────────────────
