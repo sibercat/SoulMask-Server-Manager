@@ -279,14 +279,57 @@ partial class MainForm
     /// <summary>Simple inline input dialog — avoids Microsoft.VisualBasic dependency.</summary>
     private string? ShowInputDialog(string prompt, string title, string defaultValue = "")
     {
-        using var dlg   = new Form { Text = title, Size = new Size(440, 160), StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
-        var lbl  = new Label  { Text = prompt, AutoSize = true, Location = new Point(12, 12) };
-        var tb   = new TextBox { Text = defaultValue, Location = new Point(12, lbl.Bottom + 8), Width = 400 };
-        var ok   = new Button  { Text = "OK",     DialogResult = DialogResult.OK,     Size = new Size(80, 28), Location = new Point(240, tb.Bottom + 10) };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = new Size(80, 28), Location = new Point(332, tb.Bottom + 10) };
-        dlg.Controls.AddRange([lbl, tb, ok, cancel]);
+        const int Margin = 12, Width = 430, BtnW = 84, BtnH = 28;
+        int textW = Width - Margin * 2;
+
+        using var dlg = new Form
+        {
+            Text            = title,
+            StartPosition   = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox     = false,
+            MinimizeBox     = false
+        };
+
+        // Measure the prompt explicitly. Reading lbl.Bottom on an AutoSize label
+        // that has not been laid out yet returns the default single-line height,
+        // which put the TextBox underneath a multi-line prompt and made it
+        // impossible to click into.
+        var lbl = new Label { Text = prompt, AutoSize = false, Location = new Point(Margin, Margin) };
+        int textH = TextRenderer.MeasureText(prompt, lbl.Font,
+            new Size(textW, int.MaxValue), TextFormatFlags.WordBreak).Height;
+        lbl.Size = new Size(textW, textH);
+
+        var tb = new TextBox
+        {
+            Text     = defaultValue,
+            Location = new Point(Margin, lbl.Bottom + 10),
+            Width    = textW
+        };
+
+        var ok = new Button
+        {
+            Text = "OK", DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat,
+            Size = new Size(BtnW, BtnH),
+            Location = new Point(Width - Margin - BtnW * 2 - 8, tb.Bottom + 12)
+        };
+        var cancel = new Button
+        {
+            Text = "Cancel", DialogResult = DialogResult.Cancel, FlatStyle = FlatStyle.Flat,
+            Size = new Size(BtnW, BtnH),
+            Location = new Point(Width - Margin - BtnW, tb.Bottom + 12)
+        };
+
+        dlg.ClientSize = new Size(Width, cancel.Bottom + Margin);
+
+        // Input first: index 0 is the FRONT of the WinForms z-order, so this
+        // guarantees the label can never paint over or swallow clicks for it.
+        dlg.Controls.AddRange([tb, ok, cancel, lbl]);
+
         dlg.AcceptButton = ok;
         dlg.CancelButton = cancel;
+        dlg.ActiveControl = tb;
+
         ThemeManager.Apply(dlg, ThemeManager.Current);
         return dlg.ShowDialog(this) == DialogResult.OK ? tb.Text : null;
     }

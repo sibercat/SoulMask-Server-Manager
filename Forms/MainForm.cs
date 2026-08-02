@@ -181,28 +181,26 @@ public partial class MainForm : Form
         btnSaveAsPreset.Click            += (_, _) => SaveAsNewPreset();
         btnDeletePreset.Click            += (_, _) => DeleteCurrentCustomPreset();
         btnResetGameplayDefaults.Click   += (_, _) => ResetGameplayToDefaults();
+        btnLoadTemplate.Click            += (_, _) => LoadGameplayTemplate();
         btnApplyLive.Click        += async (_, _) => await ApplyGameplaySettingLiveAsync();
         cmbGameplayPreset.SelectedIndexChanged += (_, _) =>
         {
-            if (_gameplayDirty)
+            // Ignore changes we made in code (rebuilds, declined switches)
+            if (_suppressPresetChange) return;
+
+            // Rolls the edits back on "Yes" — they live in the backing dictionary,
+            // so simply switching would keep them.
+            if (!ConfirmDiscardChanges())
             {
-                if (MessageBox.Show(
-                    "You have unsaved changes in the current preset.\nSwitch anyway and lose changes?",
-                    "Unsaved Changes", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                {
-                    RefreshPresetComboBox();
-                    return;
-                }
+                // Undo the selection without re-raising this event — rebuilding
+                // the combo here used to re-prompt in an endless loop.
+                RestorePresetSelection();
+                return;
             }
+
             PopulateGameplayGrid();
             UpdatePresetButtons();
-
-            // Persist the selected preset so it survives a restart
-            if (cmbGameplayPreset.SelectedItem?.ToString() is string sel)
-            {
-                _config.LastGameplayPreset = sel;
-                _configManager.SaveSettings(_config);
-            }
+            PersistSelectedPreset();
         };
         txtGameplaySearch.TextChanged          += (_, _) => ApplyGameplayFilter(txtGameplaySearch.Text);
         dgvGameplay.CellValueChanged  += DgvGameplay_CellValueChanged;

@@ -17,6 +17,8 @@ public class ConfigurationManager
     public  string GameplaySettingsPath   => Path.Combine(SavedDir, "GameplaySettings", "GameXishu.json");
     public  string GameplayDefaultsPath   => Path.Combine(SavedDir, "GameplaySettings", "GameXishu.default.json");
     public  string GameplayTemplatePath   => Path.Combine(ServerFilesDir, "WS", "Config", "GameplaySettings", "GameXishu_Template.json");
+    /// <summary>Folder of preset files shipped with the game (difficulty tiers + official server configs).</summary>
+    public  string GameplayTemplatesDir   => Path.Combine(ServerFilesDir, "WS", "Config", "GameplaySettings");
     public  string GameplayPresetsPath    => Path.Combine(_rootDir, "gameplay_presets.json");
     public  string BanListPath          => Path.Combine(SavedDir, "BlackAccountList.txt");
     public  string MuteListPath   => Path.Combine(SavedDir, "BanSpeek.txt");

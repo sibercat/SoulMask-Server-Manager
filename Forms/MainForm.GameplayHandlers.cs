@@ -19,6 +19,24 @@ partial class MainForm
     // not just whichever row happens to be selected.
     private readonly HashSet<string> _liveDirtyKeys = [];
 
+    // Guards cmbGameplayPreset.SelectedIndexChanged while the combo is being
+    // changed in code. Without it, restoring the selection after the user
+    // declines to discard changes re-raises the event and re-prompts forever.
+    private bool _suppressPresetChange;
+    // The preset currently loaded into the grid, so a declined switch can be undone.
+    private string? _activePresetItem;
+
+    // Cell edits are written straight into the backing dictionary, so "lose
+    // changes" has to restore from a snapshot taken when the preset was loaded —
+    // otherwise the prompt only hides the badge and the edits still get saved.
+    private Dictionary<string, double>? _presetSnapshot;
+    private string? _snapshotKey;
+    private bool    _snapshotIsCustom;
+
+    // Scanning ~132 JSON files is slow enough to notice; templates don't change
+    // while the app is open.
+    private List<GameplayTemplate>? _templateCache;
+
     private const string CustomPresetPrefix = "★ ";
     private static readonly HashSet<string> BuiltinKeys = ["0", "1", "2"];
 
@@ -98,34 +116,120 @@ partial class MainForm
         SetGameplayDirty(false);
     }
 
-    private void RefreshPresetComboBox()
+    private void RefreshPresetComboBox(bool populateGrid = true)
     {
         string? previousSelection = cmbGameplayPreset.SelectedItem?.ToString()
                                     ?? _config.LastGameplayPreset;
-        cmbGameplayPreset.Items.Clear();
 
-        // Built-in server presets
-        foreach (var key in _gameplayPresets.Keys.OrderBy(k => k))
-            cmbGameplayPreset.Items.Add($"{key} — Server Preset");
-
-        // Custom presets (prefixed with star)
-        foreach (var name in _customPresets.Keys.OrderBy(k => k))
-            cmbGameplayPreset.Items.Add($"{CustomPresetPrefix}{name}");
-
-        // Restore previous selection or default to first
-        if (cmbGameplayPreset.Items.Count > 0)
+        // Rebuild without raising SelectedIndexChanged: Items.Clear() and the
+        // SelectedIndex assignment below both fire it, which would run the
+        // unsaved-changes prompt in the middle of a rebuild.
+        _suppressPresetChange = true;
+        try
         {
-            int idx = previousSelection != null
-                ? cmbGameplayPreset.Items.IndexOf(previousSelection)
-                : -1;
-            cmbGameplayPreset.SelectedIndex = idx >= 0 ? idx : 0;
-        }
-        else
-        {
-            cmbGameplayPreset.SelectedIndex = cmbGameplayPreset.Items.Count > 0 ? 0 : -1;
-        }
+            cmbGameplayPreset.Items.Clear();
 
+            // Built-in server presets
+            foreach (var key in _gameplayPresets.Keys.OrderBy(k => k))
+                cmbGameplayPreset.Items.Add($"{key} — Server Preset");
+
+            // Custom presets (prefixed with star)
+            foreach (var name in _customPresets.Keys.OrderBy(k => k))
+                cmbGameplayPreset.Items.Add($"{CustomPresetPrefix}{name}");
+
+            // Restore previous selection or default to first
+            if (cmbGameplayPreset.Items.Count > 0)
+            {
+                int idx = previousSelection != null
+                    ? cmbGameplayPreset.Items.IndexOf(previousSelection)
+                    : -1;
+                cmbGameplayPreset.SelectedIndex = idx >= 0 ? idx : 0;
+            }
+        }
+        finally { _suppressPresetChange = false; }
+
+        // The suppressed event would have refreshed these — do it explicitly.
+        // Callers that immediately select another preset skip this to avoid
+        // building the 276-row grid twice.
+        if (populateGrid) PopulateGameplayGrid();
         UpdatePresetButtons();
+    }
+
+    /// <summary>
+    /// Selects a preset in code and loads it, bypassing the unsaved-changes
+    /// prompt — the caller has already decided this switch should happen.
+    /// </summary>
+    private void SelectPresetSilently(string item)
+    {
+        int idx = cmbGameplayPreset.Items.IndexOf(item);
+        if (idx < 0) return;
+
+        _suppressPresetChange = true;
+        try { cmbGameplayPreset.SelectedIndex = idx; }
+        finally { _suppressPresetChange = false; }
+
+        PopulateGameplayGrid();
+        UpdatePresetButtons();
+        PersistSelectedPreset();   // the suppressed handler would have done this
+    }
+
+    /// <summary>Remembers the selected preset so it is restored on next launch.</summary>
+    private void PersistSelectedPreset()
+    {
+        if (cmbGameplayPreset.SelectedItem?.ToString() is not string sel) return;
+        _config.LastGameplayPreset = sel;
+        _configManager.SaveSettings(_config);
+    }
+
+    /// <summary>
+    /// Rolls the active preset back to the values it had when it was loaded.
+    /// Cell edits mutate the backing dictionary directly, so without this the
+    /// "lose changes" prompt would only hide the badge.
+    /// </summary>
+    private void DiscardPresetEdits()
+    {
+        if (_presetSnapshot == null || _snapshotKey == null) return;
+
+        var target = _snapshotIsCustom
+            ? (_customPresets.TryGetValue(_snapshotKey, out var c) ? c : null)
+            : (_gameplayPresets.TryGetValue(_snapshotKey, out var s) ? s : null);
+        if (target == null) return;
+
+        target.Clear();
+        foreach (var kv in _presetSnapshot) target[kv.Key] = kv.Value;
+        _liveDirtyKeys.Clear();
+    }
+
+    /// <summary>
+    /// Runs the unsaved-changes prompt. Returns false if the user wants to stay
+    /// put; otherwise rolls the edits back and returns true.
+    /// </summary>
+    private bool ConfirmDiscardChanges()
+    {
+        if (!_gameplayDirty) return true;
+
+        if (MessageBox.Show(
+                "You have unsaved changes in the current preset.\nDiscard them?",
+                "Unsaved Changes", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return false;
+
+        DiscardPresetEdits();
+        return true;
+    }
+
+    /// <summary>
+    /// Puts the combo back to the preset actually loaded in the grid, without
+    /// re-entering the change handler.
+    /// </summary>
+    private void RestorePresetSelection()
+    {
+        if (_activePresetItem == null) return;
+        int idx = cmbGameplayPreset.Items.IndexOf(_activePresetItem);
+        if (idx < 0 || idx == cmbGameplayPreset.SelectedIndex) return;
+
+        _suppressPresetChange = true;
+        try { cmbGameplayPreset.SelectedIndex = idx; }
+        finally { _suppressPresetChange = false; }
     }
 
     private void PopulateGameplayGrid()
@@ -139,6 +243,12 @@ partial class MainForm
         if (preset == null)
         {
             dgvGameplay.Rows.Clear();
+            // Clear tracking too — leaving it pointing at the previous preset made
+            // a later Load Template merge against the wrong base.
+            _currentPresetRows = [];
+            _activePresetItem  = cmbGameplayPreset.SelectedItem?.ToString();
+            _presetSnapshot    = null;
+            _snapshotKey       = null;
             lblGameplayStatus.Text = _gameplayPresets.Count == 0
                 ? "Gameplay settings unavailable — install the server first."
                 : "Preset not found.";
@@ -147,9 +257,20 @@ partial class MainForm
 
         _currentPresetRows = preset.Select(kv => (kv.Key, kv.Value)).ToList();
         _liveDirtyKeys.Clear();   // edits belong to the preset they were made in
+        _activePresetItem  = cmbGameplayPreset.SelectedItem?.ToString();
+
+        // Snapshot the pristine values so edits can genuinely be rolled back
+        _presetSnapshot    = new Dictionary<string, double>(preset);
+        _snapshotKey       = SelectedPresetKey;
+        _snapshotIsCustom  = IsCustomPreset;
+
         ApplyGameplayFilter(txtGameplaySearch.Text);
-        // Custom presets always start dirty — reminds user to press Save to write to GameXishu.json.
-        SetGameplayDirty(IsCustomPreset);
+
+        // Merely selecting a preset is not an edit. Custom presets used to be
+        // flagged dirty here as a "remember to Save" nudge, but that claimed
+        // unsaved changes for a preset already saved to disk and made every
+        // switch away from it pop the discard-changes prompt.
+        SetGameplayDirty(false);
     }
 
     private void ApplyGameplayFilter(string filter)
@@ -221,36 +342,183 @@ partial class MainForm
 
         string? name = ShowInputDialog("Enter a name for this preset:", "Save As New Preset",
             IsCustomPreset ? SelectedPresetKey : "");
-        if (string.IsNullOrWhiteSpace(name)) return;
 
+        var values = _currentPresetRows.ToDictionary(r => r.Key, r => r.Value);
+        if (!CommitCustomPreset(name, values)) return;
+
+        AppendConsole($"[Gameplay] Preset '{name!.Trim()}' saved.", Color.FromArgb(78, 201, 176));
+    }
+
+    // ── Load a preset shipped with the game ───────────────────────────
+
+    private void LoadGameplayTemplate()
+    {
+        // Loading replaces what's in the grid — same contract as switching presets
+        if (!ConfirmDiscardChanges()) return;
+
+        List<GameplayTemplate> templates;
+        var previousCursor = Cursor.Current;
+        Cursor.Current = Cursors.WaitCursor;
+        try
+        {
+            templates = _templateCache ??= GameplayTemplateService.Scan(_configManager.GameplayTemplatesDir);
+        }
+        finally { Cursor.Current = previousCursor; }
+
+        if (templates.Count == 0)
+        {
+            _templateCache = null;   // don't cache "nothing installed"
+            MessageBox.Show(
+                "No preset files found.\n\nThey ship with the server files at:\n" +
+                $"{_configManager.GameplayTemplatesDir}\n\nInstall the server first.",
+                "No Templates Found", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        // "Partial" must be judged against a full preset, NOT against whatever is
+        // currently selected — otherwise loading a 42-key overlay while a 42-key
+        // preset is selected looks "full" and silently drops the other 234 settings.
+        int fullCount = templates.Max(t => t.DefinedCount);
+
+        var chosen = ShowTemplatePicker(templates, fullCount);
+        if (chosen == null) return;
+
+        bool isPartial = chosen.DefinedCount < fullCount;
+
+        var merged = new Dictionary<string, double>();
+        if (isPartial)
+            foreach (var (key, value) in _currentPresetRows)   // base = what's loaded now
+                merged[key] = value;
+        foreach (var kv in chosen.Values)                       // template wins
+            merged[kv.Key] = kv.Value;
+
+        string? name = ShowInputDialog(
+            isPartial
+                ? $"'{chosen.DisplayName}' defines {chosen.DefinedCount} of {fullCount} settings.\n" +
+                  "The rest keep their current values.\n\nSave as preset named:"
+                : $"'{chosen.DisplayName}' defines {chosen.DefinedCount} settings.\n\nSave as preset named:",
+            "Load Template", chosen.DisplayName);
+
+        if (!CommitCustomPreset(name, merged)) return;
+
+        AppendConsole(
+            $"[Gameplay] Loaded '{chosen.FileName}' (preset {chosen.SlotKey}) — {chosen.DefinedCount} setting(s) " +
+            $"{(isPartial ? "merged into" : "into")} preset '{name!.Trim()}'. Press Save to apply.",
+            Color.FromArgb(78, 201, 176));
+    }
+
+    /// <summary>
+    /// Validates a preset name, stores the values, persists them and selects the
+    /// preset. Shared by Save As… and Load Template…. Returns false if cancelled.
+    /// </summary>
+    private bool CommitCustomPreset(string? name, Dictionary<string, double> values)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
         name = name.Trim();
 
         if (BuiltinKeys.Contains(name))
         {
             MessageBox.Show("Cannot use '0', '1', or '2' as a custom preset name.", "Invalid Name",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
+            return false;
         }
 
-        bool isOverwrite = _customPresets.ContainsKey(name);
-        if (isOverwrite && MessageBox.Show($"Overwrite existing preset '{name}'?", "Confirm",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (_customPresets.ContainsKey(name) &&
+            MessageBox.Show($"Overwrite existing preset '{name}'?", "Confirm",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
 
-        // Copy current values into custom presets
-        _customPresets[name] = _currentPresetRows.ToDictionary(r => r.Key, r => r.Value);
-        SaveCustomPresetToDisk(null); // save all custom presets
+        _customPresets[name] = values;
+        SaveCustomPresetToDisk(null);
 
-        // Clear dirty BEFORE RefreshPresetComboBox so SelectedIndexChanged
-        // doesn't trigger the "unsaved changes" prompt during the switch
         SetGameplayDirty(false);
-        RefreshPresetComboBox();
+        RefreshPresetComboBox(populateGrid: false);   // the select below loads the grid
+        SelectPresetSilently($"{CustomPresetPrefix}{name}");
+        return true;
+    }
 
-        // Select the new preset
-        string target = $"{CustomPresetPrefix}{name}";
-        int idx = cmbGameplayPreset.Items.IndexOf(target);
-        if (idx >= 0) cmbGameplayPreset.SelectedIndex = idx;
+    private GameplayTemplate? ShowTemplatePicker(List<GameplayTemplate> templates, int currentCount)
+    {
+        using var dlg = new Form
+        {
+            Text            = "Load Gameplay Template",
+            Size            = new Size(620, 520),
+            StartPosition   = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.Sizable,
+            MinimizeBox     = false, MaximizeBox = false,
+            MinimumSize     = new Size(520, 400)
+        };
 
-        AppendConsole($"[Gameplay] Preset '{name}' saved.", Color.FromArgb(78, 201, 176));
+        var lv = new ListView
+        {
+            Dock          = DockStyle.Fill,
+            View          = View.Details,
+            FullRowSelect = true,
+            MultiSelect   = false,
+            HideSelection = false
+        };
+        lv.Columns.Add("Preset",   300);
+        lv.Columns.Add("Settings",  80, HorizontalAlignment.Right);
+        lv.Columns.Add("Type",     170);
+
+        void Populate(string filter)
+        {
+            lv.BeginUpdate();
+            lv.Items.Clear();
+            foreach (var t in templates)
+            {
+                if (filter.Length > 0 &&
+                    t.DisplayName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                bool partial = currentCount > 0 && t.DefinedCount < currentCount;
+                var item = new ListViewItem(t.DisplayName) { Tag = t };
+                item.SubItems.Add(t.DefinedCount.ToString());
+                item.SubItems.Add(partial ? "Partial — merges" : "Full preset");
+                if (partial) item.ForeColor = Color.FromArgb(255, 152, 0);
+                lv.Items.Add(item);
+            }
+            lv.EndUpdate();
+        }
+
+        var pnlTop = new Panel { Dock = DockStyle.Top, Height = 62, Padding = new Padding(10, 8, 10, 4) };
+        var lblHint = new Label
+        {
+            Text     = "Presets shipped with the game. \"Partial\" ones only override some settings —\n" +
+                       "the rest keep their current values. Nothing is saved until you press Save.",
+            AutoSize = true, Location = new Point(10, 4), Tag = "sub"
+        };
+        var txtFilter = new TextBox
+        {
+            Location = new Point(10, 36), Width = 260, PlaceholderText = "Filter presets..."
+        };
+        txtFilter.TextChanged += (_, _) => Populate(txtFilter.Text.Trim());
+        pnlTop.Controls.AddRange([lblHint, txtFilter]);
+
+        var pnlBottom = new Panel { Dock = DockStyle.Bottom, Height = 46, Padding = new Padding(10, 8, 10, 8) };
+        var btnOk     = new Button { Text = "Load",   Size = new Size(90, 30), DialogResult = DialogResult.OK,     FlatStyle = FlatStyle.Flat, Tag = "accent", Enabled = false };
+        var btnCancel = new Button { Text = "Cancel", Size = new Size(90, 30), DialogResult = DialogResult.Cancel, FlatStyle = FlatStyle.Flat };
+        btnOk.Location     = new Point(pnlBottom.Width - 200, 8);
+        btnCancel.Location = new Point(pnlBottom.Width - 104, 8);
+        btnOk.Anchor     = AnchorStyles.Top | AnchorStyles.Right;
+        btnCancel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        pnlBottom.Controls.AddRange([btnOk, btnCancel]);
+
+        lv.SelectedIndexChanged += (_, _) => btnOk.Enabled = lv.SelectedItems.Count > 0;
+        lv.DoubleClick          += (_, _) => { if (lv.SelectedItems.Count > 0) dlg.DialogResult = DialogResult.OK; };
+
+        // Fill first, Top/Bottom after — WinForms docks last-added first
+        dlg.Controls.Add(lv);
+        dlg.Controls.Add(pnlTop);
+        dlg.Controls.Add(pnlBottom);
+
+        dlg.AcceptButton = btnOk;
+        dlg.CancelButton = btnCancel;
+
+        Populate("");
+        ThemeManager.Apply(dlg, ThemeManager.Current);
+
+        return dlg.ShowDialog(this) == DialogResult.OK && lv.SelectedItems.Count > 0
+            ? lv.SelectedItems[0].Tag as GameplayTemplate
+            : null;
     }
 
     // ── Delete custom preset ──────────────────────────────────────────

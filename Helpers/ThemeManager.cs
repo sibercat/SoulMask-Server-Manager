@@ -378,7 +378,7 @@ public static class ThemeManager
 
         lv.DrawItem += (_, e) => { /* handled by DrawSubItem */ };
 
-        lv.DrawSubItem += (_, e) =>
+        lv.DrawSubItem += (sender, e) =>
         {
             bool d = IsDark;
             Color rowBg    = d ? Color.FromArgb(37, 37, 38)  : SystemColors.Window;
@@ -388,13 +388,29 @@ public static class ThemeManager
 
             bool isAlt = e.ItemIndex % 2 == 1;
             Color bg   = e.Item!.Selected ? Accent : (isAlt ? altRowBg : rowBg);
-            Color text = e.Item.Selected ? Color.White : fg;
+
+            // Honour a per-item ForeColor. Owner-draw previously hard-coded the
+            // text colour, so callers setting item.ForeColor (mod update status,
+            // partial-template highlighting) silently had no effect.
+            Color itemFg  = e.Item.ForeColor;
+            Color defaultFg = sender is ListView owner ? owner.ForeColor : fg;
+            Color text = e.Item.Selected
+                ? Color.White
+                : (itemFg != Color.Empty && itemFg != defaultFg ? itemFg : fg);
+
+            // Respect the column's alignment instead of always drawing left
+            var align = e.Header?.TextAlign switch
+            {
+                HorizontalAlignment.Right  => TextFormatFlags.Right,
+                HorizontalAlignment.Center => TextFormatFlags.HorizontalCenter,
+                _                          => TextFormatFlags.Left
+            };
 
             e.Graphics.FillRectangle(new SolidBrush(bg), e.Bounds);
             TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? "",
                 new Font("Segoe UI", 9f),
-                new Rectangle(e.Bounds.X + 6, e.Bounds.Y, e.Bounds.Width - 6, e.Bounds.Height),
-                text, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+                new Rectangle(e.Bounds.X + 6, e.Bounds.Y, e.Bounds.Width - 12, e.Bounds.Height),
+                text, TextFormatFlags.VerticalCenter | align | TextFormatFlags.EndEllipsis);
 
             // bottom row line
             using var pen = new Pen(line);

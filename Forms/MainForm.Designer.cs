@@ -60,7 +60,7 @@ partial class MainForm
     protected TabPage tabGameplay;
     protected ComboBox cmbGameplayPreset;
     protected TextBox txtGameplaySearch;
-    protected Button btnSaveGameplay, btnReloadGameplay, btnApplyLive, btnSaveAsPreset, btnDeletePreset, btnResetGameplayDefaults;
+    protected Button btnSaveGameplay, btnReloadGameplay, btnApplyLive, btnSaveAsPreset, btnDeletePreset, btnResetGameplayDefaults, btnLoadTemplate;
     protected Label lblGameplayStatus, lblGameplayDirty, lblGameplayDescription;
     protected DataGridView dgvGameplay;
 
@@ -230,6 +230,7 @@ partial class MainForm
         _toolTip.SetToolTip(btnSaveGameplay,   "Save changes to the selected preset.\nFor server presets (0/1/2), writes to GameXishu.json.");
         _toolTip.SetToolTip(btnReloadGameplay, "Reload all presets from disk, discarding unsaved changes.");
         _toolTip.SetToolTip(btnSaveAsPreset,   "Save the current values as a new named custom preset.");
+        _toolTip.SetToolTip(btnLoadTemplate,   "Browse the preset files shipped with the game (difficulty tiers and official\nserver configs) and load one as a custom preset.\nNothing is written to the server until you press Save.");
         _toolTip.SetToolTip(btnDeletePreset,          "Delete the selected custom preset.\nBuilt-in server presets (0/1/2) cannot be deleted.");
         _toolTip.SetToolTip(btnResetGameplayDefaults, "Reset all values in the current preset to the original game defaults.\nA backup is taken automatically on first load.");
         _toolTip.SetToolTip(btnApplyLive,      "Apply every setting you have edited to the running server immediately via EchoPort.\nIf nothing is edited, applies the selected row.\nNo restart needed — uses the 'sc' console command.\nLive changes are lost on restart unless you also press Save.");
@@ -745,19 +746,28 @@ partial class MainForm
             PlaceholderText = "Filter settings..."
         };
 
-        btnSaveGameplay         = new Button { Text = "Save",             Size = new Size(72, 30), Location = new Point(470, 10), FlatStyle = FlatStyle.Flat, Tag = "accent" };
-        btnReloadGameplay       = new Button { Text = "Reload",           Size = new Size(72, 30), Location = new Point(550, 10), FlatStyle = FlatStyle.Flat };
-        btnSaveAsPreset         = new Button { Text = "Save As…",         Size = new Size(80, 30), Location = new Point(630, 10), FlatStyle = FlatStyle.Flat };
-        btnDeletePreset         = new Button { Text = "Delete",           Size = new Size(70, 30), Location = new Point(718, 10), FlatStyle = FlatStyle.Flat, Tag = "danger", Enabled = false };
-        btnResetGameplayDefaults= new Button { Text = "Reset Defaults",   Size = new Size(110, 30), Location = new Point(796, 10), FlatStyle = FlatStyle.Flat };
-        btnApplyLive            = new Button { Text = "Apply Live",       Size = new Size(88, 30),  Location = new Point(914, 10), FlatStyle = FlatStyle.Flat };
+        // Packed tight: fitting "Load Template…" in without pushing the status
+        // labels off-screen when the window is near its minimum width.
+        btnSaveGameplay         = new Button { Text = "Save",             Size = new Size(64, 30),  Location = new Point(470, 10), FlatStyle = FlatStyle.Flat, Tag = "accent" };
+        btnReloadGameplay       = new Button { Text = "Reload",           Size = new Size(64, 30),  Location = new Point(538, 10), FlatStyle = FlatStyle.Flat };
+        btnSaveAsPreset         = new Button { Text = "Save As…",         Size = new Size(74, 30),  Location = new Point(606, 10), FlatStyle = FlatStyle.Flat };
+        btnLoadTemplate         = new Button { Text = "Load Template…",   Size = new Size(106, 30), Location = new Point(684, 10), FlatStyle = FlatStyle.Flat };
+        btnDeletePreset         = new Button { Text = "Delete",           Size = new Size(62, 30),  Location = new Point(794, 10), FlatStyle = FlatStyle.Flat, Tag = "danger", Enabled = false };
+        btnResetGameplayDefaults= new Button { Text = "Reset Defaults",   Size = new Size(102, 30), Location = new Point(860, 10), FlatStyle = FlatStyle.Flat };
+        btnApplyLive            = new Button { Text = "Apply Live",       Size = new Size(82, 30),  Location = new Point(966, 10), FlatStyle = FlatStyle.Flat };
 
-        lblGameplayDirty  = new Label { Text = "● Unsaved", ForeColor = Color.FromArgb(255, 152, 0), AutoSize = true, Location = new Point(1014, 17), Visible = false };
-        lblGameplayStatus = new Label { Text = "", AutoSize = true, Location = new Point(1080, 17), Tag = "sub" };
+        // Status labels live in a right-docked panel rather than at fixed X. The
+        // form is only 1180 wide (1000 at minimum), so absolute positions past
+        // ~1050 were clipped off-screen entirely.
+        var pnlGameplayStatus = new Panel { Dock = DockStyle.Right, Width = 210 };
+        lblGameplayDirty  = new Label { Text = "● Unsaved", ForeColor = Color.FromArgb(255, 152, 0), AutoSize = true, Location = new Point(4, 17), Visible = false };
+        lblGameplayStatus = new Label { Text = "", AutoSize = true, Location = new Point(78, 17), Tag = "sub" };
+        pnlGameplayStatus.Controls.AddRange([lblGameplayDirty, lblGameplayStatus]);
 
         pnlTop.Controls.AddRange([cmbGameplayPreset, txtGameplaySearch,
-            btnSaveGameplay, btnReloadGameplay, btnSaveAsPreset, btnDeletePreset,
-            btnResetGameplayDefaults, btnApplyLive, lblGameplayDirty, lblGameplayStatus]);
+            btnSaveGameplay, btnReloadGameplay, btnSaveAsPreset, btnLoadTemplate, btnDeletePreset,
+            btnResetGameplayDefaults, btnApplyLive]);
+        pnlTop.Controls.Add(pnlGameplayStatus);
 
         // ── Settings grid ────────────────────────────────────────────
         dgvGameplay = new DataGridView
