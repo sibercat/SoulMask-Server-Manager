@@ -501,7 +501,9 @@ partial class MainForm
         AddLabel(grpRcon, "0.0.0.0 = all adapters", 298, 114, tag: "sub");
 
         // ── Gameplay ────────────────────────────────────────────────
-        grpGameplay = MakeGroupBox("Gameplay", 10, 346, 360, 110);
+        // Right column under RCON — the left column holds Performance, which
+        // needs the height for one CPU checkbox per logical processor.
+        grpGameplay = MakeGroupBox("Gameplay", 544, 346, 380, 110);
         AddLabel(grpGameplay, "Map:", 10, 24);
         cmbMap = new ComboBox
         {
@@ -518,7 +520,10 @@ partial class MainForm
         grpGameplay.Controls.Add(chkPveMode);
 
         // ── Performance ──────────────────────────────────────────────
-        grpPerformance = MakeGroupBox("Performance", 382, 346, 542, 110);
+        // Left column, top aligned with RCON and bottom with Gameplay. Tall
+        // enough for 8 rows of 8 core checkboxes — 64 is the most a process
+        // affinity mask can address.
+        grpPerformance = MakeGroupBox("Performance", 10, 184, 520, 272);
         AddLabel(grpPerformance, "Process Priority:", 10, 24);
         cmbProcessPriority = new ComboBox
         {
@@ -529,16 +534,17 @@ partial class MainForm
         cmbProcessPriority.Items.AddRange(["Normal", "AboveNormal", "High"]);
         cmbProcessPriority.SelectedIndex = 0;
         grpPerformance.Controls.Add(cmbProcessPriority);
-        chkUseAllCores = new CheckBox { Text = "Use All CPU Cores", Checked = true, Location = new Point(10, 54), AutoSize = true };
+        AddLabel(grpPerformance, "CPU Affinity:", 10, 54);
+        chkUseAllCores = new CheckBox { Text = "Use All CPU Cores", Checked = true, Location = new Point(150, 52), AutoSize = true };
         grpPerformance.Controls.Add(chkUseAllCores);
-        AddLabel(grpPerformance, "CPU Affinity:", 10, 80);
+        AddLabel(grpPerformance, $"{Environment.ProcessorCount} logical processors", 300, 54, tag: "sub");
         flpCpuCores = new FlowLayoutPanel
         {
-            Location    = new Point(150, 76),
-            Size        = new Size(380, 24),
+            Location      = new Point(14, 82),
+            Size          = new Size(CpuCoresPerRow * CpuCoreCellWidth, 8 * CpuCoreCellHeight),
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoSize    = false
+            WrapContents  = true,
+            AutoSize      = false
         };
         grpPerformance.Controls.Add(flpCpuCores);
 
@@ -727,47 +733,71 @@ partial class MainForm
         tabGameplay.Padding = new Padding(0);
 
         // ── Top toolbar ──────────────────────────────────────────────
-        var pnlTop = new Panel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(8, 8, 8, 4) };
+        // Two rows. Everything on one row needs ~1100 px, more than the tab gets
+        // even at the default window width, so a right-docked status panel ended
+        // up covering Apply Live (and hid it completely at minimum width).
+        var pnlTop = new Panel { Dock = DockStyle.Top, Height = 82, Padding = new Padding(8, 8, 8, 4) };
 
-        AddLabel(pnlTop, "Preset:", 8, 16);
+        // Row 1 — what you're looking at
+        AddLabel(pnlTop, "Preset:", 8, 14);
         cmbGameplayPreset = new ComboBox
         {
-            Location      = new Point(58, 12),
-            Size          = new Size(160, 23),
+            Location      = new Point(58, 10),
+            Size          = new Size(220, 23),
             DropDownStyle = ComboBoxStyle.DropDownList
         };
         // Items populated in LoadGameplaySettings()
 
-        AddLabel(pnlTop, "Search:", 232, 16);
+        AddLabel(pnlTop, "Search:", 296, 14);
         txtGameplaySearch = new TextBox
         {
-            Location        = new Point(286, 12),
-            Size            = new Size(170, 23),
-            PlaceholderText = "Filter settings..."
+            Location        = new Point(350, 10),
+            Size            = new Size(260, 23),
+            PlaceholderText = "English or internal name..."
         };
 
-        // Packed tight: fitting "Load Template…" in without pushing the status
-        // labels off-screen when the window is near its minimum width.
-        btnSaveGameplay         = new Button { Text = "Save",             Size = new Size(64, 30),  Location = new Point(470, 10), FlatStyle = FlatStyle.Flat, Tag = "accent" };
-        btnReloadGameplay       = new Button { Text = "Reload",           Size = new Size(64, 30),  Location = new Point(538, 10), FlatStyle = FlatStyle.Flat };
-        btnSaveAsPreset         = new Button { Text = "Save As…",         Size = new Size(74, 30),  Location = new Point(606, 10), FlatStyle = FlatStyle.Flat };
-        btnLoadTemplate         = new Button { Text = "Load Template…",   Size = new Size(106, 30), Location = new Point(684, 10), FlatStyle = FlatStyle.Flat };
-        btnDeletePreset         = new Button { Text = "Delete",           Size = new Size(62, 30),  Location = new Point(794, 10), FlatStyle = FlatStyle.Flat, Tag = "danger", Enabled = false };
-        btnResetGameplayDefaults= new Button { Text = "Reset Defaults",   Size = new Size(102, 30), Location = new Point(860, 10), FlatStyle = FlatStyle.Flat };
-        btnApplyLive            = new Button { Text = "Apply Live",       Size = new Size(82, 30),  Location = new Point(966, 10), FlatStyle = FlatStyle.Flat };
+        // Row 2 — actions. A flow panel with auto-sized buttons, so each button
+        // is as wide as its text ("Load Template…" was truncated to "Load") and
+        // none can overlap.
+        var flpGameplayActions = new FlowLayoutPanel
+        {
+            Location      = new Point(8, 42),
+            AutoSize      = true,
+            WrapContents  = false,
+            FlowDirection = FlowDirection.LeftToRight,
+            Margin        = Padding.Empty,
+            Padding       = Padding.Empty
+        };
 
-        // Status labels live in a right-docked panel rather than at fixed X. The
-        // form is only 1180 wide (1000 at minimum), so absolute positions past
-        // ~1050 were clipped off-screen entirely.
-        var pnlGameplayStatus = new Panel { Dock = DockStyle.Right, Width = 210 };
-        lblGameplayDirty  = new Label { Text = "● Unsaved", ForeColor = Color.FromArgb(255, 152, 0), AutoSize = true, Location = new Point(4, 17), Visible = false };
-        lblGameplayStatus = new Label { Text = "", AutoSize = true, Location = new Point(78, 17), Tag = "sub" };
-        pnlGameplayStatus.Controls.AddRange([lblGameplayDirty, lblGameplayStatus]);
+        Button ActionButton(string text, string? tag = null) => new()
+        {
+            Text         = text,
+            AutoSize     = true,
+            MinimumSize  = new Size(64, 30),
+            Margin       = new Padding(0, 0, 4, 0),
+            FlatStyle    = FlatStyle.Flat,
+            Tag          = tag
+        };
 
-        pnlTop.Controls.AddRange([cmbGameplayPreset, txtGameplaySearch,
-            btnSaveGameplay, btnReloadGameplay, btnSaveAsPreset, btnLoadTemplate, btnDeletePreset,
-            btnResetGameplayDefaults, btnApplyLive]);
-        pnlTop.Controls.Add(pnlGameplayStatus);
+        btnSaveGameplay          = ActionButton("Save", "accent");
+        btnReloadGameplay        = ActionButton("Reload");
+        btnSaveAsPreset          = ActionButton("Save As…");
+        btnLoadTemplate          = ActionButton("Load Template…");
+        btnDeletePreset          = ActionButton("Delete", "danger");
+        btnDeletePreset.Enabled  = false;
+        btnResetGameplayDefaults = ActionButton("Reset Defaults");
+        btnApplyLive             = ActionButton("Apply Live");
+
+        // Status sits right after the buttons, so "● Unsaved" is next to Save
+        // rather than across the window.
+        lblGameplayDirty  = new Label { Text = "● Unsaved", ForeColor = Color.FromArgb(255, 152, 0), AutoSize = true, Margin = new Padding(12, 7, 0, 0), Visible = false };
+        lblGameplayStatus = new Label { Text = "", AutoSize = true, Margin = new Padding(12, 7, 0, 0), Tag = "sub" };
+
+        flpGameplayActions.Controls.AddRange([btnSaveGameplay, btnReloadGameplay, btnSaveAsPreset,
+            btnLoadTemplate, btnDeletePreset, btnResetGameplayDefaults, btnApplyLive,
+            lblGameplayDirty, lblGameplayStatus]);
+
+        pnlTop.Controls.AddRange([cmbGameplayPreset, txtGameplaySearch, flpGameplayActions]);
 
         // ── Settings grid ────────────────────────────────────────────
         dgvGameplay = new DataGridView
@@ -785,13 +815,20 @@ partial class MainForm
             EditMode                    = DataGridViewEditMode.EditOnKeystrokeOrF2,
             ClipboardCopyMode           = DataGridViewClipboardCopyMode.EnableWithoutHeaderText
         };
+        // "Setting" is the English name for display only. The real key that is
+        // written to GameXishu.json lives in "Key", so nothing is ever looked up
+        // by its English text.
         dgvGameplay.Columns.Add(new DataGridViewTextBoxColumn
         {
-            Name = "Setting", HeaderText = "Setting", ReadOnly = true, FillWeight = 65
+            Name = "Setting", HeaderText = "Setting", ReadOnly = true, FillWeight = 60
         });
         dgvGameplay.Columns.Add(new DataGridViewTextBoxColumn
         {
-            Name = "Value", HeaderText = "Value", FillWeight = 35
+            Name = "Value", HeaderText = "Value", FillWeight = 15
+        });
+        dgvGameplay.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Key", HeaderText = "Internal Name", ReadOnly = true, FillWeight = 25
         });
 
         // ── Description bar ──────────────────────────────────────────

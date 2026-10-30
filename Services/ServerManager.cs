@@ -408,8 +408,10 @@ public class ServerManager
         if (useAll || string.IsNullOrWhiteSpace(affinityMask)) return;
         try
         {
-            if (long.TryParse(affinityMask, out long mask) && mask > 0)
-                _serverProcess.ProcessorAffinity = (IntPtr)mask;
+            // Unsigned: a mask that includes core 64 sets the top bit, which a
+            // signed parse saw as negative and silently skipped.
+            if (ulong.TryParse(affinityMask, out ulong mask) && mask != 0)
+                _serverProcess.ProcessorAffinity = (IntPtr)unchecked((long)mask);
         }
         catch { /* Not critical */ }
     }

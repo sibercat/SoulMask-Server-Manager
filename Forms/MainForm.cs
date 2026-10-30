@@ -167,6 +167,12 @@ public partial class MainForm : Form
             if (c is CheckBox chk)       chk.CheckedChanged += (_, _) => SetDirty(true);
         }
 
+        // Wired here rather than when the boxes are built, so restoring the
+        // saved selection at startup doesn't flag the settings as unsaved.
+        foreach (CheckBox cb in flpCpuCores.Controls.OfType<CheckBox>())
+            cb.CheckedChanged += (_, _) => SetDirty(true);
+        chkUseAllCores.CheckedChanged += (_, _) => flpCpuCores.Enabled = !chkUseAllCores.Checked;
+
         // Config editor
         btnSaveGameIni.Click    += (_, _) => _configManager.WriteGameIni(rtbGameIni.Text);
         btnReloadGameIni.Click  += (_, _) => rtbGameIni.Text = _configManager.ReadGameIni();
@@ -206,6 +212,7 @@ public partial class MainForm : Form
         dgvGameplay.CellValueChanged  += DgvGameplay_CellValueChanged;
         dgvGameplay.CellBeginEdit     += DgvGameplay_CellBeginEdit;
         dgvGameplay.SelectionChanged  += DgvGameplay_SelectionChanged;
+        dgvGameplay.CellFormatting    += DgvGameplay_CellFormatting;
         tabMain.SelectedIndexChanged  += async (_, _) =>
         {
             if (tabMain.SelectedTab == tabGameplay && _gameplayPresets.Count == 0)
@@ -405,6 +412,8 @@ public partial class MainForm : Form
         cmbProcessPriority.SelectedIndex = priIdx >= 0 ? priIdx : 0;
 
         chkUseAllCores.Checked = _config.UseAllCores;
+        ApplyCpuAffinityToCheckboxes(_config.CpuAffinity);
+        flpCpuCores.Enabled    = !chkUseAllCores.Checked;
 
         // Automation – Schedule
         chkScheduleEnabled.Checked = _config.ScheduledRestartEnabled;
@@ -504,32 +513,61 @@ public partial class MainForm : Form
     }
 
     // ── CPU Core Checkboxes ───────────────────────────────────────────
+    // Fixed-size cells so the cores line up in columns (auto-sized "C9" and
+    // "C10" differ in width and made ragged rows).
+    private const int CpuCoresPerRow    = 8;
+    private const int CpuCoreCellWidth  = 56;
+    private const int CpuCoreCellHeight = 22;
+    // Process.ProcessorAffinity is a 64-bit mask.
+    private const int MaxCpuCores       = 64;
+
     private void BuildCpuCoreCheckboxes()
     {
         flpCpuCores.Controls.Clear();
-        for (int i = 0; i < Environment.ProcessorCount; i++)
+        int count = Math.Min(Environment.ProcessorCount, MaxCpuCores);
+        for (int i = 0; i < count; i++)
         {
             var cb = new CheckBox
             {
-                Text    = $"C{i}",
-                Checked = true,
-                AutoSize = true,
-                Margin  = new Padding(2, 0, 2, 0),
-                Tag     = i
+                Text     = $"C{i}",
+                Checked  = true,
+                AutoSize = false,
+                Size     = new Size(CpuCoreCellWidth, CpuCoreCellHeight),
+                Margin   = Padding.Empty,
+                Tag      = i
             };
-            cb.CheckedChanged += (_, _) => SetDirty(true);
             flpCpuCores.Controls.Add(cb);
+            // Start a new row after every 8th core regardless of panel width
+            if (i % CpuCoresPerRow == CpuCoresPerRow - 1)
+                flpCpuCores.SetFlowBreak(cb, true);
+        }
+    }
+
+    /// <summary>
+    /// Ticks the cores in a saved affinity mask. An empty or invalid mask means
+    /// "all cores". Without this the boxes always came up all-ticked, and the
+    /// next save quietly replaced the user's selection with every core.
+    /// </summary>
+    private void ApplyCpuAffinityToCheckboxes(string affinityMask)
+    {
+        bool hasMask = ulong.TryParse(affinityMask, out ulong mask) && mask != 0;
+        foreach (CheckBox cb in flpCpuCores.Controls.OfType<CheckBox>())
+        {
+            if (cb.Tag is int idx)
+                cb.Checked = !hasMask || ((mask >> idx) & 1) != 0;
         }
     }
 
     private string BuildCpuAffinityMask()
     {
         if (chkUseAllCores.Checked) return "";
-        long mask = 0;
+        // ulong, not long: bit 63 (core 64) made a signed mask negative, and
+        // ServerManager then ignored it as invalid.
+        ulong mask = 0;
         foreach (CheckBox cb in flpCpuCores.Controls.OfType<CheckBox>())
         {
             if (cb.Checked && cb.Tag is int idx)
-                mask |= 1L << idx;
+                mask |= 1UL << idx;
         }
         return mask == 0 ? "" : mask.ToString();
     }

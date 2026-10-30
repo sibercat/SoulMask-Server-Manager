@@ -278,19 +278,34 @@ partial class MainForm
         dgvGameplay.SuspendLayout();
         dgvGameplay.Rows.Clear();
 
+        // Match the English name as well as the internal key, so a search
+        // works whichever one the user knows.
         bool hasFilter = !string.IsNullOrWhiteSpace(filter);
         var rows = hasFilter
-            ? _currentPresetRows.Where(r => r.Key.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList()
+            ? _currentPresetRows.Where(r =>
+                  r.Key.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                  GameplaySettingDescriptions.GetDisplayName(r.Key).Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList()
             : _currentPresetRows;
 
         foreach (var (key, value) in rows)
-            dgvGameplay.Rows.Add(key, FormatValue(value));
+            dgvGameplay.Rows.Add(GameplaySettingDescriptions.GetDisplayName(key), FormatValue(value), key);
+
+        // Rows added after a header-click sort land unsorted under the sort
+        // arrow — re-apply the user's sort.
+        if (dgvGameplay.SortedColumn is { } sorted)
+            dgvGameplay.Sort(sorted, dgvGameplay.SortOrder == SortOrder.Descending
+                ? System.ComponentModel.ListSortDirection.Descending
+                : System.ComponentModel.ListSortDirection.Ascending);
 
         lblGameplayStatus.Text = hasFilter
             ? $"Showing {rows.Count} of {_currentPresetRows.Count} settings"
             : $"{_currentPresetRows.Count} settings";
 
         dgvGameplay.ResumeLayout();
+
+        // The rebuild doesn't reliably raise SelectionChanged, which left the
+        // description bar describing a setting the filter had just hidden.
+        DgvGameplay_SelectionChanged(null, EventArgs.Empty);
     }
 
     // ── Save server preset ────────────────────────────────────────────
@@ -658,7 +673,7 @@ partial class MainForm
         {
             if (dgvGameplay.CurrentRow == null) return;
 
-            string key    = dgvGameplay.CurrentRow.Cells["Setting"].Value?.ToString() ?? "";
+            string key    = dgvGameplay.CurrentRow.Cells["Key"].Value?.ToString() ?? "";
             string valStr = dgvGameplay.CurrentRow.Cells["Value"].Value?.ToString() ?? "";
             if (string.IsNullOrWhiteSpace(key)) return;
 
@@ -724,7 +739,7 @@ partial class MainForm
         if (e.RowIndex < 0 || dgvGameplay.Columns["Value"] is not { } valCol
             || e.ColumnIndex != valCol.Index) return;
 
-        string key    = dgvGameplay.Rows[e.RowIndex].Cells["Setting"].Value?.ToString() ?? "";
+        string key    = dgvGameplay.Rows[e.RowIndex].Cells["Key"].Value?.ToString() ?? "";
         string valStr = dgvGameplay.Rows[e.RowIndex].Cells["Value"].Value?.ToString() ?? "";
 
         if (string.IsNullOrWhiteSpace(key)) return;
@@ -767,21 +782,32 @@ partial class MainForm
             return;
         }
 
-        string key = dgvGameplay.CurrentRow.Cells["Setting"].Value?.ToString() ?? "";
+        string key = dgvGameplay.CurrentRow.Cells["Key"].Value?.ToString() ?? "";
         if (string.IsNullOrEmpty(key))
         {
             lblGameplayDescription.Text = "";
             return;
         }
 
+        // The English name is in the grid now; this bar keeps the full text
+        // (long names get cut off in the column) plus category and key.
         string desc     = GameplaySettingDescriptions.Get(key);
         string category = GameplaySettingDescriptions.GetCategory(key);
 
         lblGameplayDescription.Text = string.IsNullOrEmpty(desc)
-            ? key
+            ? $"{key}  —  no English description yet"
             : string.IsNullOrEmpty(category)
-                ? desc
-                : $"[{category}]  {desc}";
+                ? $"{key}  —  {desc}"
+                : $"[{category}]  {key}  —  {desc}";
+    }
+
+    private void DgvGameplay_CellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        // The internal name is reference info — keep it behind the English name.
+        // Done here because the theme's alternating-row style overrides a
+        // column-level colour on every other row.
+        if (e.CellStyle is { } style && dgvGameplay.Columns["Key"] is { } keyCol && e.ColumnIndex == keyCol.Index)
+            style.ForeColor = Color.FromArgb(140, 140, 140);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

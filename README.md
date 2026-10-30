@@ -39,7 +39,8 @@ No installation needed — just extract and run `SoulMaskServerManager.exe`.
 - One-click update: downloads and installs all mods via SteamCMD
 
 ### Gameplay Settings
-- Browse and edit all 272+ gameplay settings (translated with descriptions)
+- Browse and edit all 272+ gameplay settings by their English names, with the internal name alongside
+- Search by English name or internal name
 - Save and load named presets
 - Apply settings live to a running server without restart
 

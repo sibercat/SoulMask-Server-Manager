@@ -14,6 +14,13 @@ public static class GameplaySettingDescriptions
     public static string Get(string key)
         => _descriptions.TryGetValue(key, out var d) ? d : string.Empty;
 
+    /// <summary>
+    /// English name to show in the settings grid, or the raw key for settings
+    /// that have no translation yet. Display only — the key is what gets saved.
+    /// </summary>
+    public static string GetDisplayName(string key)
+        => _descriptions.TryGetValue(key, out var d) ? d.TrimEnd('.') : key;
+
     // ── Category helpers ───────────────────────────────────────────────
 
     public static string GetCategory(string key)
@@ -123,7 +130,7 @@ public static class GameplaySettingDescriptions
         ["ZuRenFuZhi"]                     = "Tribe member copy/duplication setting.",
         ["ShipBlueprintBuildConsumeSwitch"]= "Enable resource consumption when building ships from blueprints.",
         ["MaxXiuMianCangCount"]            = "Maximum sleeping berths / dormitory capacity.",
-        ["XiuMianDistance"]                = "Maximum distance allowed to use a sleep point.",
+        ["XiuMianDistance"]                = "Distance allowed to interact with a sleep/respawn point.",
         ["XiuMianOfflineDays"]             = "Days offline before a sleep point expires.",
 
         // ── Combat ────────────────────────────────────────────────────
@@ -181,7 +188,6 @@ public static class GameplaySettingDescriptions
         ["MaxFuZhongRatio"]                = "Maximum carry weight (burden) ratio multiplier.",
         ["CurProfInitRatio"]               = "Starting proficiency initialization ratio.",
         ["CrewCountRatio"]                 = "Crew / companion count ratio multiplier.",
-        ["BeiDongYiJiShuXingRatio"]        = "Player passive primary attribute multiplier.",
         ["WanJiaBeiXiaoRenRatio"]          = "Player-enslaved NPC count ratio.",
         ["WanJiaBeiXiaoTiRatio"]           = "Player-tamed animal count ratio.",
         ["AnimalFollowerMaxCount"]         = "Maximum number of animal followers per player.",
@@ -209,7 +215,7 @@ public static class GameplaySettingDescriptions
         ["ShengMingHuiFuRatio"]           = "Player HP recovery rate multiplier.",
         ["TiLiHuiFuRatio"]                = "Player stamina recovery rate multiplier.",
         ["QiXiHuiFuRatio"]                = "Player breath/stamina recovery rate multiplier.",
-        ["JiaSiHuiFuRatio"]               = "Offline recovery rate multiplier (recovery while logged out).",
+        ["JiaSiHuiFuRatio"]               = "Offline recovery rate multiplier (HP/food/water while logged out).",
         ["MentalRecoveryRate"]            = "Mental / spirit energy recovery rate multiplier.",
         ["PhysicalRecoveryIntervalRate"]  = "Physical recovery interval rate multiplier.",
 
@@ -331,8 +337,6 @@ public static class GameplaySettingDescriptions
         // ── Misc ──────────────────────────────────────────────────────
         ["XiShuWeiLing"]                  = "Zero out all coefficients (debug reset switch).",
         ["XinXiLuRu"]                     = "Information input mode setting.",
-        ["XiuMianDistance"]               = "Distance allowed to interact with a sleep/respawn point.",
-        ["JiaSiHuiFuRatio"]               = "Offline recovery rate (HP/food/water while logged out).",
     };
 
     private static readonly Dictionary<string, string> _categories = new(StringComparer.Ordinal)
